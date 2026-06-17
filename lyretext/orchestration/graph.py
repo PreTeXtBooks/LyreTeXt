@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from langgraph.graph import END, START, StateGraph
+
+from ..agents import (
+    build_translate_content_agent,
+    enhance_agent,
+    read_ingest_agent,
+    read_structure_agent,
+    review_agent,
+    translate_math_agent,
+)
+from ..config import create_gemini_llm
+from .state import ChapterTranslation, TranslationState, SkeletonState
+
+""" def build_translation_graph():
+    llm = create_gemini_llm()
+    translate_content_agent = build_translate_content_agent(llm)
+
+    graph_builder = StateGraph(TranslationState)
+
+    graph_builder.add_node("read_ingest", read_ingest_agent)
+    graph_builder.add_node("read_structure", read_structure_agent)
+    graph_builder.add_node("translate_content", translate_content_agent)
+    #graph_builder.add_node("translate_math", translate_math_agent)
+    graph_builder.add_node("review", review_agent)
+    graph_builder.add_node("enhance", enhance_agent)
+
+    graph_builder.add_edge(START, "read_ingest")
+    graph_builder.add_edge("read_ingest", "read_structure")
+    graph_builder.add_edge("read_structure", "translate_content")
+    #graph_builder.add_edge("translate_content", "translate_math")
+    #graph_builder.add_edge("translate_math", "review")
+    graph_builder.add_edge("translate_content", "review")
+    graph_builder.add_edge("review", "enhance")
+    graph_builder.add_edge("enhance", END) 
+
+    return graph_builder.compile() """
+
+from ..read.agents import read_chapter, read_project
+from ..translate.agents import translate_chapter
+from langgraph.types import Send
+
+
+def build_chapter_graph():
+    llm = create_gemini_llm()
+    graph_builder = StateGraph(ChapterTranslation)
+
+    graph_builder.add_node("read_chapter", read_chapter)
+    graph_builder.add_node("translate_chapter", translate_chapter)
+
+    graph_builder.add_edge(START, "read_chapter")
+    graph_builder.add_edge("read_chapter", "translate_chapter")
+    graph_builder.add_edge("translate_chapter", END)
+    # graph_builder.add_edge("read_chapter", END)
+
+    return graph_builder.compile()
+
+
+def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
+    manifest = state.get("manifest", [])
+    return [
+        Send(
+            "translator_graph",
+            {
+                "source_path": chapter["source_path"],
+                "output_path": chapter["output_path"],
+            },
+        )
+        for chapter in manifest
+    ]
+
+
+def build_workflow_graph():
+    llm = create_gemini_llm()
+    graph_builder = StateGraph(TranslationState)
+
+    chapter_graph = build_chapter_graph()
+
+    #graph_builder.add_node("split_manifest", split_manifest)
+    graph_builder.add_node("translator_graph", chapter_graph)
+
+    graph_builder.add_conditional_edges(START, split_manifest)
+    graph_builder.add_edge("translator_graph", END)
+
+    return graph_builder.compile()
+
+
+def test_skeleton_agent():
+    llm = create_gemini_llm()
+    graph_builder = StateGraph(SkeletonState)
+
+    graph_builder.add_node("read_project", read_project)
+
+    graph_builder.add_edge(START, "read_project")
+    graph_builder.add_edge("read_project", END)
+
+    return graph_builder.compile()
