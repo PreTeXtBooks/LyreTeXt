@@ -14,6 +14,15 @@ class UnitStructure(BaseModel):
 class ChapterStructure(BaseModel):
     content: list[UnitStructure] = Field(..., description="list of units in the chapter, in order")
 
+class TemporaryFile(BaseModel):
+    name: str = Field(..., description="the H1 heading of the file, without the `#` symbol")
+    file_name: str = Field(..., description="the name of the file, i.e. name + extension")
+    content: str = Field(..., description="markdown content of the file")
+    type: str = Field(..., description="type of the file, e.g., 'front_matter', 'chapter', 'appendix' or 'back_matter'")
+
+class TemporaryManifest(BaseModel):
+    manifest: list[TemporaryFile] = Field(..., description="list of files in the project, in order of processing")
+
 class ChapterManifest(BaseModel):
     type: Literal["front_matter", "chapter", "back_matter"] = Field(..., description="type of the chapter")
     name: str = Field(..., description="name of the chapter")

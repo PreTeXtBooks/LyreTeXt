@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import os
+import re
+from pathlib import Path
+
 
 def load_r_markdown(path: str) -> str:
     with open(path, "r", encoding="utf-8") as source_file:
@@ -45,3 +49,79 @@ def split_into_sections(content: str) -> list[dict[str, Any]]:
 def merge_pretext_document(translated_sections: list[dict[str, Any]]) -> str:
     body = "\n\n".join(section["content"][0]["text"] for section in translated_sections)
     return f"<pretext>\n{body}\n</pretext>"
+
+
+def split_markdown_by_h1(input_file, output_dir):
+    """
+    Splits markdown/rmd/qmd files by H1, preserving preamble and extension.
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Get the file extension from the original file
+    _, ext = os.path.splitext(input_file)
+
+    with open(input_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # Regex to split by H1 headings
+    # The split includes the delimiter (# Heading)
+    parts = re.split(r'(^# .+)', content, flags=re.M)
+
+    #Iterate through H1 sections
+    for i in range(1, len(parts), 2):
+        heading = parts[i].strip()
+        body = parts[i+1]
+        
+        # Create a safe filename
+        safe_name = re.sub(r'[^\w\s-]', '', heading.replace('#', '').strip())
+        safe_name = safe_name.replace(' ', '_').lower()
+        
+        file_path = os.path.join(output_dir, f"{safe_name}{ext}")
+
+        # Account for any preample before the first H1 heading
+        if i == 1 and (preamble:= parts[0].strip()):
+            heading = f"{preamble}\n\n{heading}"
+        
+        with open(file_path, 'w', encoding='utf-8') as out_f:
+            out_f.write(f"{heading}\n\n{body.strip()}")
+        
+        print(f"Created: {file_path}")
+
+def create_files_from_json(target_dir: str, file_data: list[dict[str, str]]) -> None:
+    """
+    Creates files in the specified directory based on a list of objects 
+    containing 'name' and 'content'.
+    
+    Args:
+        target_dir: The path to the folder where files should be created.
+        file_data: A list of dictionaries, e.g., [{"name": "test.txt", "content": "hello"}]
+    """
+    # Convert string path to a Path object and ensure it exists
+    base_path = Path(target_dir)
+    base_path.mkdir(parents=True, exist_ok=True)
+    
+    print(file_data, type(file_data))
+
+    for item in file_data:
+        file_name = item.get("file_name")
+        content = item.get("content", "")
+        
+        if file_name:
+            # Construct full path and write the file
+            file_path = base_path / file_name
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"Successfully created: {file_path}")
+            except IOError as e:
+                print(f"Error creating {file_name}: {e}")
+        else:
+            print("Skipping entry: Missing 'name' key.")
+
+# Example usage:
+# data = [
+#     {"name": "readme.txt", "content": "This is a test file."},
+#     {"name": "config.json", "content": '{"status": "active"}'}
+# ]
+# create_files_from_json("./my_output_dir", data)

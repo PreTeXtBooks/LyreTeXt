@@ -1,3 +1,4 @@
+from pathlib import Path
 from time import time
 
 from ..tools import load_prompts
@@ -19,6 +20,9 @@ def translate_chapter(state: ChapterTranslation) -> dict[str, Any]:
     )
     llm = create_gemini_llm().with_structured_output(PreTeXtOutput.model_json_schema())
     response = llm.invoke([message])
+    path_obj = Path(output_path)
+    # This creates the necessary parent directories if they are missing
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(response.get("xml", ""))
     return {"pretext_output": response}

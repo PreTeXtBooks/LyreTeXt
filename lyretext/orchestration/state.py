@@ -8,11 +8,15 @@ class ChapterManifest(TypedDict):
     source_path: str
 
 class TranslationState(TypedDict):
+    project_source: str
+    output_dir: str
     manifest: list[ChapterManifest]
 
 class SkeletonState(TypedDict):
     project_source: str
     source_files: list[Any]
+    temporary_dir: str
+    output_dir: str
     manifest: list[dict[str, Any]] | Any
 
 class TestState(TypedDict):
