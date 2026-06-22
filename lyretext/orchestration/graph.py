@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
-from ..config import create_gemini_llm
+from ..config import create_llm
 from .state import ChapterTranslation, TranslationState, SkeletonState
 
 """ def build_translation_graph():
-    llm = create_gemini_llm()
+    llm = create_llm("gemini")
     translate_content_agent = build_translate_content_agent(llm)
 
     graph_builder = StateGraph(TranslationState)
@@ -28,13 +28,13 @@ from .state import ChapterTranslation, TranslationState, SkeletonState
 
     return graph_builder.compile() """
 
-from ..read.agents import read_chapter, read_project, upload_project, structure_project, create_temp_directory
+from ..read.agents import read_chapter, read_project, upload_project, structure_project, create_temp_directory, process_to_markdown
 from ..translate.agents import translate_chapter
 from langgraph.types import Send
 
 
 def build_chapter_graph():
-    llm = create_gemini_llm()
+    llm = create_llm("gemini")
     graph_builder = StateGraph(ChapterTranslation)
 
     graph_builder.add_node("read_chapter", read_chapter)
@@ -64,15 +64,18 @@ def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
 
 
 def build_skeleton_agent():
-    llm = create_gemini_llm()
+    llm = create_llm("gemini")
     graph_builder = StateGraph(SkeletonState)
 
+
+    graph_builder.add_node("process_to_markdown", process_to_markdown)
     graph_builder.add_node("structure_project", structure_project)
     graph_builder.add_node("upload_project", upload_project)
     graph_builder.add_node("create_temp_directory", create_temp_directory)
     #graph_builder.add_node("read_project", read_project)
 
-    graph_builder.add_edge(START, "upload_project")
+    graph_builder.add_edge(START, "process_to_markdown")
+    graph_builder.add_edge("process_to_markdown", "upload_project")
     graph_builder.add_edge("upload_project", "structure_project")
     graph_builder.add_edge("structure_project", "create_temp_directory")
     graph_builder.add_edge("create_temp_directory", END)
@@ -80,7 +83,7 @@ def build_skeleton_agent():
     return graph_builder.compile()
 
 def build_workflow_graph():
-    llm = create_gemini_llm()
+    llm = create_llm("gemini")
     graph_builder = StateGraph(TranslationState)
 
     chapter_graph = build_chapter_graph()
@@ -89,6 +92,7 @@ def build_workflow_graph():
     def call_skeleton_graph(state):
         output = skeleton_graph.invoke({
             "project_source": state["project_source"],
+            "temp_dir": state["temp_dir"],
             "output_dir": state["output_dir"],
         })
         return {"manifest": output.get("manifest", [])}

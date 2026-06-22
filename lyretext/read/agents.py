@@ -1,9 +1,10 @@
 import os
+import subprocess
 from time import time
 
-from ..tools import load_prompts, split_markdown_by_h1, create_files_from_json
+from ..tools import load_prompts, split_markdown_by_h1, create_files_from_json, find_rscript
 from ..orchestration.state import TestState, TranslationState, ChapterTranslation, SkeletonState
-from ..config import create_gemini_llm
+from ..config import create_llm
 from typing import Any
 from langchain.messages import HumanMessage
 from google import genai
@@ -26,16 +27,42 @@ def read_chapter(state: ChapterTranslation) -> dict[Any]:
             {"type": "file", "file_id": myfile.uri, "mime_type": "text/markdown"}
         ]
     )
-    llm = create_gemini_llm().with_structured_output(ChapterStructure.model_json_schema())
+    llm = create_llm("gemini").with_structured_output(ChapterStructure.model_json_schema())
     response = llm.invoke([message])
     #print("returning response", response.get("content"))
     return {"chapter_structure": response.get("content")}
 
+def process_to_markdown(state: SkeletonState) -> dict[str, Any]:
+    project_source = state["project_source"]
+    project_source_path = Path(project_source)
+    temp_dir = state.get("temp_dir", "temp_output")
+    temp_dir_path = Path(temp_dir) / "markdown"
+    if not temp_dir_path.exists():
+        temp_dir_path.mkdir(parents=True)
+    print("creating at", temp_dir_path)
+
+    rscript = os.environ.get("RSCRIPT_EXE") or find_rscript()
+
+    for file in project_source_path.iterdir():
+        if not (file.is_file() and file.suffix in [".rmd", ".qmd"]):
+            continue
+        destination_file = Path(temp_dir_path) / file.with_suffix(".md").name
+
+        knit_expr = f"knitr::knit('{file.as_posix()}', output='{destination_file.as_posix()}')"
+        result = subprocess.run(
+            [rscript, "-e", knit_expr],
+            text=True,
+            capture_output=True,
+        )
+
+    return {"project_md_source": temp_dir_path, "temp_dir": temp_dir}
+
+
 def upload_project(state: SkeletonState) -> dict[str, Any]:
     client = genai.Client()
 
-    project_source = state["project_source"]
-    folder = Path(project_source)
+    project_md_source = state["project_md_source"]
+    folder = Path(project_md_source)
 
     files = []
     for p in folder.iterdir():
@@ -60,12 +87,12 @@ def structure_project(state: SkeletonState) -> dict[str, Any]:
             {"type": "file", "file_id": file.uri, "mime_type": "text/markdown"} for file in source_files
         ]
     )
-    llm = create_gemini_llm().with_structured_output(TemporaryManifest.model_json_schema())
+    llm = create_llm("gemini").with_structured_output(TemporaryManifest.model_json_schema())
     response = llm.invoke([message])
     return {"manifest": response.get("manifest")}
 
 def create_temp_directory(state: SkeletonState) -> dict[str, Any]:
-    temp_dir = state.get("temporary_dir", "temp_output")
+    temp_dir = state.get("temp_dir", "temp_output")
     output_dir = state.get("output_dir")
     file_manifest = state.get("manifest", [])
     if not Path(temp_dir).exists():
@@ -88,6 +115,9 @@ def create_temp_directory(state: SkeletonState) -> dict[str, Any]:
 
 
 def read_project(state: SkeletonState) -> dict[str, Any]:  
+    """
+    Deprecated
+    """
     files = state.get("source_files", [])          
     prompt = str(load_prompts("lyretext\\read\\prompts\\prompts.md").get("read_project"))
     message = HumanMessage(
@@ -98,7 +128,7 @@ def read_project(state: SkeletonState) -> dict[str, Any]:
             {"type": "file", "file_id": file.uri, "mime_type": "text/markdown"} for file in files
         ]
     )
-    llm = create_gemini_llm().with_structured_output(ProjectManifest.model_json_schema())
+    llm = create_llm("gemini").with_structured_output(ProjectManifest.model_json_schema())
     response = llm.invoke([message])
     return {"manifest": response}
 

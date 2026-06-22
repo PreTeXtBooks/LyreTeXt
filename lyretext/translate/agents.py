@@ -3,7 +3,7 @@ from time import time
 
 from ..tools import load_prompts
 from ..orchestration.state import ChapterTranslation
-from ..config import create_gemini_llm
+from ..config import create_llm
 from typing import Any
 from langchain.messages import HumanMessage
 from .structure import PreTeXtOutput
@@ -18,7 +18,7 @@ def translate_chapter(state: ChapterTranslation) -> dict[str, Any]:
             {"type": "text", "text": str(structure)}
         ]
     )
-    llm = create_gemini_llm().with_structured_output(PreTeXtOutput.model_json_schema())
+    llm = create_llm("gemini").with_structured_output(PreTeXtOutput.model_json_schema())
     response = llm.invoke([message])
     path_obj = Path(output_path)
     # This creates the necessary parent directories if they are missing
@@ -36,6 +36,8 @@ def create_folder_structure(state: ChapterTranslation) -> dict[str, Any]:
             {"type": "text", "text": str(structure)}
         ]
     )
-    llm = create_gemini_llm()
+    llm = create_llm("gemini")
     response = llm.invoke([message])
     return {"folder_structure": response}
+
+

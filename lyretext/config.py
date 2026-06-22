@@ -4,7 +4,15 @@ import os
 
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
 
+def create_llm(model_type: str = "gemini", **options):
+    if model_type == "gemini":
+        return create_gemini_llm(**options)
+    elif model_type == "anthropic":
+        return create_anthropic_llm(**options)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
 def create_gemini_llm(**options) -> ChatGoogleGenerativeAI:
     load_dotenv()
@@ -15,3 +23,13 @@ def create_gemini_llm(**options) -> ChatGoogleGenerativeAI:
         raise ValueError("GEMINI_API_KEY is required to initialize Gemini.")
 
     return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key, **options)
+
+def create_anthropic_llm(**options) -> ChatAnthropic:
+    load_dotenv()
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    model_name = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY is required to initialize Anthropic.")
+    
+    return ChatAnthropic(model=model_name, anthropic_api_key=api_key, **options)

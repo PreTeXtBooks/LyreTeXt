@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import glob
+import shutil
 from typing import Any
 
 import os
@@ -87,6 +89,29 @@ def split_markdown_by_h1(input_file, output_dir):
             out_f.write(f"{heading}\n\n{body.strip()}")
         
         print(f"Created: {file_path}")
+
+def find_rscript() -> str:
+	# Prefer PATH, but fall back to common Windows install locations.
+	found = shutil.which("Rscript")
+	if found:
+		return found
+
+	candidates = []
+	for base in [
+		r"C:\\Program Files\\R",
+		r"C:\\Program Files\\R\\R-*",
+		r"C:\\Program Files\\R\\R-*\\bin",
+		r"C:\\Program Files\\R\\R-*\\bin\\x64",
+		r"C:\\Program Files\\R\\R-*\\bin\\x86",
+	]:
+		candidates.extend(glob.glob(os.path.join(base, "Rscript.exe")))
+
+	if candidates:
+		return sorted(candidates)[-1]
+
+	raise FileNotFoundError(
+		"Rscript.exe was not found. Add R to PATH or set RSCRIPT_EXE to its full path."
+	)
 
 def create_files_from_json(target_dir: str, file_data: list[dict[str, str]]) -> None:
     """
