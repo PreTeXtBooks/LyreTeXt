@@ -1,0 +1,17 @@
+---
+title: "Chapter 2: Introduction"
+output: html_document
+---
+
+# Introduction
+
+Data analysis begins with understanding basic summaries. Suppose we collect data on the daily coffee consumption of five software engineers.
+
+## The Dataset
+
+Let's initialize our sample dataset using an R code block. We will store the number of cups consumed in a vector named `coffee_cups`.
+
+```{r coffee-data}
+# Vector of coffee cups consumed
+coffee_cups <- c(3, 4, 2, 5, 4)
+print(coffee_cups)

@@ -1,0 +1,22 @@
+---
+title: "Chapter 4: Measuring Spread"
+output: html_document
+---
+
+# Measuring Spread
+
+An average doesn't tell the whole story. We also need to understand how much the data varies around that central point.
+
+## Variance and Standard Deviation
+
+Sample variance $s^2$ computes the average squared deviation from the mean:
+
+$$s^2 = \frac{1}{n-1} \sum_{i=1}^{n} (X_i - \bar{X})^2$$
+
+We can compute both variance and standard deviation directly in R:
+
+```{r variance-calc}
+coffee_cups <- c(3, 4, 2, 5, 4)
+var_cups <- var(coffee_cups)
+sd_cups <- sd(coffee_cups)
+cat("Variance:", var_cups, "\nStandard Deviation:", sd_cups)

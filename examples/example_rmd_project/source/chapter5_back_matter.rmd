@@ -1,0 +1,19 @@
+---
+title: "Chapter 5: Back Matter"
+output: html_document
+---
+
+# Appendix
+
+This appendix contains supplementary information regarding parser edge cases and raw markdown formatting structures.
+
+## Parser Verification Checklist
+
+1. Verify all code block tokens (` ``` `) render properly.
+2. Ensure math blocks ($\$$ and $\$\$$) parse without escaping errors.
+3. Validate that headers compile into hierarchical navigation trees.
+
+# References
+
+* Fisher, R. A. (1925). *Statistical Methods for Research Workers*. Oliver and Boyd.
+* Pearson, K. (1900). *On the criterion that a given system of deviations from the probable in the case of a correlated system of variables is such that it can be reasonably supposed to have arisen from random sampling*. Philosophical Magazine.

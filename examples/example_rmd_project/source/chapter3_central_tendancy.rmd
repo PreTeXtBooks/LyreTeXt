@@ -1,0 +1,25 @@
+---
+title: "Chapter 3: Central Tendency"
+output: html_document
+---
+
+# Central Tendency
+
+To summarize our coffee dataset, we look for a central value. The most common metric is the arithmetic mean.
+
+## The Mean
+
+The mathematical formula for calculating the sample mean $\bar{X}$ is expressed using display math below:
+
+$$\bar{X} = \frac{1}{n} \sum_{i=1}^{n} X_i$$
+
+### Simple Summary Table
+
+Here is a quick look at how the mean compares to the median for our coffee dataset:
+
+| Metric | Formula Type | Typical Value |
+|--------|--------------|---------------|
+| Mean   | Algebraic    | 3.6 cups      |
+| Median | Positional   | 4.0 cups      |
+
+The median provides a robust alternative when datasets contain extreme outliers.

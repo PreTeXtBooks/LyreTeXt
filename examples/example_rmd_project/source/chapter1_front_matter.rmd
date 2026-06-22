@@ -1,0 +1,23 @@
+---
+title: "Chapter 1: Front Matter"
+output: html_document
+---
+
+# Foreword
+
+Welcome to this trivial guide on statistical foundations. Statistics helps us understand the chaos of the universe, or at least the average weight of rubber ducks. As Gauss once said, math is the queen of sciences.
+
+## About the Author
+
+The author is a certified data nerd who enjoys finding patterns in random noise.
+
+# Preface
+
+This text is designed to test R Markdown parsers using simple concepts like the mean $\mu$ and variance $\sigma^2$.
+
+Key elements covered in this book:
+* Central tendency measures
+* Visualizing statistical spread
+* Parsers and structural formatting
+
+We hope you enjoy this brief, synthetic statistical journey.
