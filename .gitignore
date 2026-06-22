@@ -221,3 +221,6 @@ __marimo__/
 /demo
 /development
 main*.py
+
+examples/*/output
+examples/*/temp
