@@ -29,9 +29,13 @@ You will receive an array of objects. Each object represents a block with these 
 5. **Tables & Figures:** - Map `type: "TABLE"` to `<table><tabular>` structures.
    - Map `type: "FIGURE"` to a `<figure>` tag.
 
-6. **ids** - Generate an `xml:id` attribute for each section/subsection/subsubsection based on the heading content. Use a lowercase, hyphenated version of the heading text (e.g., "Finding the Mean" becomes `xml:id="sec-finding-the-mean"`). Ensure uniqueness by appending a numeric suffix if necessary.
+6. **rmd blocks:** - Map `type: rmdnote` to `<note>`, `type: rmdwarning` to `<warning>`, and `type: rmdtip` to `<tip>`.
 
-7. **Metadata:** Do not include `order` in the visible text, but you may add them as XML comments (e.g., ``) right above the element for debugging purposes.
+7. **ids** - Generate an `xml:id` attribute for each section/subsection/subsubsection based on the heading content. Use a lowercase, hyphenated version of the heading text (e.g., "Finding the Mean" becomes `xml:id="sec-finding-the-mean"`). Ensure uniqueness by appending a numeric suffix if necessary.
+
+8. **Metadata:** Do not include `order` in the visible text, but you may add them as XML comments (e.g., ``) right above the element for debugging purposes.
+
+9. **References and citations:** Convert these to native PreTeXt reference tags. For example, `[see @ref]` becomes `<xref target="ref"/>`. Do not attempt to change the target of references or citations: you can assume that these are preserved, only convert the syntax.
 
 # Output Format
 Return ONLY valid, well-indented PreTeXt XML code. Do not include markdown code block backticks (```xml) or conversational filler text. Start directly with the root XML element.

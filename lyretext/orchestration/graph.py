@@ -33,8 +33,8 @@ from ..translate.agents import translate_chapter
 from langgraph.types import Send
 
 
-def build_chapter_graph():
-    llm = create_llm("gemini")
+def build_chapter_graph(provider: str = "gemini"):
+    llm = create_llm(provider)
     graph_builder = StateGraph(ChapterTranslation)
 
     graph_builder.add_node("read_chapter", read_chapter)
@@ -63,8 +63,8 @@ def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
 
 
 
-def build_skeleton_agent():
-    llm = create_llm("gemini")
+def build_skeleton_agent(provider: str = "gemini"):
+    llm = create_llm(provider)
     graph_builder = StateGraph(SkeletonState)
 
 
@@ -82,12 +82,12 @@ def build_skeleton_agent():
 
     return graph_builder.compile()
 
-def build_workflow_graph():
-    llm = create_llm("gemini")
+def build_workflow_graph(provider: str = "gemini"):
+    llm = create_llm(provider)
     graph_builder = StateGraph(TranslationState)
 
-    chapter_graph = build_chapter_graph()
-    skeleton_graph = build_skeleton_agent()
+    chapter_graph = build_chapter_graph(provider)
+    skeleton_graph = build_skeleton_agent(provider)
 
     def call_skeleton_graph(state):
         output = skeleton_graph.invoke({

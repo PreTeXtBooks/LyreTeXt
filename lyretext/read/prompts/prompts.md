@@ -68,7 +68,7 @@ You will be provided with a collection of markdown or markdown-derivative docume
 # Instructions:
 1. Identify Level 1 headings (lines starting with #) as split points.
 2. Any content appearing before the first H1 heading in the file, such as YAML, should be treated as a 'preamble'.
-3. You must ignore any # characters that occur inside code blocks (anything between ``` markers), YAML front matter, or anywhere else in the document that does not represent a true H1 heading.
+3. You must ignore any # characters that occur inside code blocks (anything between ``` markers), YAML front matter, internal reference labels, or anywhere else in the document that does not represent a true H1 heading.
 4. For each H1 heading, create a filename according to the following rules. If the H1 heading is a front matter section such as a foreword or preface, the filename should be "fm-<kebab-case-of-heading>.<ext>". If the H1 heading is a chapter, the filename should be "chapter-n-<kebab-case-of-heading>.<ext>", where n should be incremented *in order* of the provided files. If the H1 heading is an appendix, the filename should be "app-<kebab-case-of-heading>.<ext>". If the H1 heading is a backmatter section such as references or bibliography, the filename should be "bm-<kebab-case-of-heading>.<ext>". All sections should fit into one of these categories. The file extension should match the original file's extension (e.g., .md, .rmd, .qmd) in all cases.
 5. For each split point, you will return a JSON object containing the filename and the content of that section. If the section has preamble, include it above the H1 heading. 
 
