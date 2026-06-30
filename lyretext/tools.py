@@ -3,6 +3,7 @@ from __future__ import annotations
 import glob
 import shutil
 from typing import Any
+import yaml
 
 import os
 import re
@@ -143,6 +144,45 @@ def create_files_from_json(target_dir: str, file_data: list[dict[str, str]]) -> 
                 print(f"Error creating {file_name}: {e}")
         else:
             print("Skipping entry: Missing 'name' key.")
+
+def get_before_chapter_scripts(project_dir: str = ".") -> list[str]:
+    """
+    Parses _bookdown.yml to extract any 'before_chapter_script' paths.
+    Always returns a list of strings for consistent downstream iteration.
+    """
+    yaml_path = os.path.join(project_dir, "_bookdown.yml")
+    
+    # 1. Check if the configuration file actually exists
+    if not os.path.exists(yaml_path):
+        print(f"[*] No _bookdown.yml found at {yaml_path}. Skipping.")
+        return []
+        
+    try:
+        # 2. Read and parse the YAML safely
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            
+        if not config:
+            return []
+            
+        # 3. Extract the target key
+        scripts = config.get("before_chapter_script", [])
+        
+        # 4. Normalize the output: YAML allows a single string or a list.
+        #    We force it to always be a list so your loop doesn't break.
+        if isinstance(scripts, str):
+            return [scripts]
+        elif isinstance(scripts, list):
+            return [str(s) for s in scripts]
+        else:
+            return []
+            
+    except yaml.YAMLError as e:
+        print(f"[!] Error parsing YAML file: {e}")
+        return []
+    except Exception as e:
+        print(f"[!] Unexpected error: {e}")
+        return []
 
 # Example usage:
 # data = [

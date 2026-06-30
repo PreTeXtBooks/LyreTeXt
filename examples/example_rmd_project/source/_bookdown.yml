@@ -1,0 +1,33 @@
+# The primary configuration file for a bookdown project
+
+# 1. Output File and Directory Options
+book_filename: "my_awesome_book"
+output_dir: "docs"
+delete_merged_file: true
+
+# 2. Chapter Compilation Strategy (Crucial for your translator)
+# If true, it uses the "Knit and Merge" approach (isolated R sessions).
+# If false (default), it uses "Merge and Knit" (one shared R session).
+new_session: false
+
+# 3. Execution Scripts (Look for these to run setup code!)
+# These scripts run in the R session before/after each chapter compiles.
+before_chapter_script: ["_common.R"]
+after_chapter_script: []
+
+# 4. Explicit Chapter Ordering
+# If this key is missing, bookdown will default to sorting files alphabetically.
+# Listing them here defines the exact reading/compilation order.
+rmd_files: [
+  #"index.Rmd",          # Typically contains the book introduction/preface
+  "chapter1_front_matter.Rmd",
+  "chapter2_introduction.Rmd",
+  "chapter3_central_tendency.Rmd",
+  "chapter4_spread.Rmd",
+  "chapter5_back_matter.Rmd"      # Typically holds the bibliography placeholder
+]
+
+# 5. Language and UI Customization
+language:
+  ui:
+    chapter_name: "Chapter "
