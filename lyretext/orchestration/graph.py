@@ -56,6 +56,10 @@ def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
             {
                 "source_path": chapter["source_path"],
                 "output_path": chapter["output_path"],
+                "execution_mode": state.get("execution_mode", "upload"),
+                "apply_mode": state.get("apply_mode", "auto_apply"),
+                "create_backup": state.get("create_backup", False),
+                "provider": state.get("provider", "gemini"),
             },
         )
         for chapter in manifest
@@ -94,6 +98,10 @@ def build_workflow_graph(provider: str = "gemini"):
             "project_source": state["project_source"],
             "temp_dir": state["temp_dir"],
             "output_dir": state["output_dir"],
+            "execution_mode": state.get("execution_mode", "upload"),
+            "apply_mode": state.get("apply_mode", "auto_apply"),
+            "create_backup": state.get("create_backup", False),
+            "provider": state.get("provider", provider),
         })
         return {"manifest": output.get("manifest", [])}
 
