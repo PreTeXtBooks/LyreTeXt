@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Optional
 from pathlib import Path
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from ..config import get_resolved_config
 from .state import TranslationState
 from ..translate.state import ChapterTranslation
 from ..translate.graph import build_chapter_graph
 from ..read.graph import build_skeleton_graph
+from .checkpointing import build_checkpointer, build_checkpoint_config, ensure_run_id
 
 """ def build_translation_graph():
     llm = create_llm("gemini")
@@ -70,7 +72,6 @@ def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
             "Use resolve_config_for_graph() or get_resolved_config() to build it "
             "before invoking the workflow graph."
         )
-    global_opts = resolved_config.global_options
     return [
         Send(
             "translator_graph",
@@ -85,7 +86,7 @@ def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
 
 
 
-def build_workflow_graph():
+def build_workflow_graph(checkpointer: BaseCheckpointSaver | None = None):
     graph_builder = StateGraph(TranslationState)
 
     chapter_graph = build_chapter_graph()
@@ -113,4 +114,30 @@ def build_workflow_graph():
     graph_builder.add_conditional_edges("build_skeleton", split_manifest)
     graph_builder.add_edge("translator_graph", END)
 
-    return graph_builder.compile()
+    return graph_builder.compile(checkpointer=checkpointer)
+
+
+def build_checkpointed_workflow_graph():
+    return build_workflow_graph(checkpointer=build_checkpointer())
+
+
+def invoke_workflow_graph(
+    state: dict,
+    *,
+    config_file: Optional[str | Path] = None,
+    runtime_payload: Optional[dict] = None,
+    run_id: str | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
+):
+    workflow_graph = build_workflow_graph(checkpointer=checkpointer or build_checkpointer())
+    workflow_state = dict(state)
+    if "resolved_config" not in workflow_state:
+        workflow_state.update(
+            resolve_config_for_graph(
+                config_file=config_file,
+                runtime_payload=runtime_payload,
+            )
+        )
+    resolved_run_id = ensure_run_id(run_id or workflow_state.get("run_id"))
+    workflow_state["run_id"] = resolved_run_id
+    return workflow_graph.invoke(workflow_state, config=build_checkpoint_config(resolved_run_id))
