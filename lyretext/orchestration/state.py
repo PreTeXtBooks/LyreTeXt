@@ -1,35 +1,29 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, TypedDict
-
-
-def _last_value(a, b):
-    """Reducer that keeps the last value. Used for resolved_config written
-    identically by every parallel chapter node."""
-    return b
+from typing import Any, NotRequired, TypedDict
 
 
 class ChapterManifest(TypedDict):
     type: str
     name: str
     source_path: str
+    output_path: str
 
 class TranslationState(TypedDict):
     project_source: str
     temp_dir: str
     output_dir: str
     manifest: list[ChapterManifest]
-    # Annotated so that parallel chapter branches can pass through the same value
-    # without triggering InvalidUpdateError.
-    run_id: Annotated[str, _last_value]
-    last_checkpoint_id: Annotated[str, _last_value]
-    checkpoint_namespace: Annotated[str, _last_value]
-    stage_id: Annotated[str, _last_value]
-    pause_requested: Annotated[bool, _last_value]
-    pause_reason: Annotated[str, _last_value]
-    # Annotated so that parallel chapter nodes can all write the same value
-    # without triggering InvalidUpdateError.
-    resolved_config: Annotated[Any, _last_value]
+    transition_policy: NotRequired[dict[str, Any]]
+    human_signoffs: NotRequired[dict[str, bool]]
+    validation_summary: NotRequired[dict[str, Any]]
+    stage_gate_decision: NotRequired[dict[str, Any]]
+    chapter_status: NotRequired[dict[str, str]]
+    recompile_queue: NotRequired[list[str]]
+    project_type: NotRequired[str]
+    read_stage_warnings: NotRequired[list[dict[str, Any]]]
+    # P4: project-level resource files discovered during read
+    project_resources: NotRequired[list[dict[str, Any]]]
 
 class TestState(TypedDict):
     source_path: str

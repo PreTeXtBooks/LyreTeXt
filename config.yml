@@ -1,0 +1,12 @@
+global_options:
+  apply_mode: auto_apply
+  create_backup: false
+  execution_mode: direct
+  llm_model: null
+  pipeline: rmd
+  provider: gemini
+node_overrides:
+  translate_chapter:
+    create_backup: true
+    llm_model: null
+    provider: null

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+import sqlite3
+from typing import Any, Literal
 from uuid import uuid4
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -11,27 +12,67 @@ def ensure_run_id(run_id: str | None = None) -> str:
     return run_id or str(uuid4())
 
 
-def build_checkpointer() -> BaseCheckpointSaver:
+def build_checkpointer(
+    backend: Literal["memory", "sqlite"] = "memory",
+    db_path: str | None = None,
+) -> BaseCheckpointSaver:
+    """Build a checkpointer.
+
+    Args:
+        backend: "memory" (in-process, lost on exit) or "sqlite" (persistent file).
+        db_path: Path to the SQLite database file. Only used when backend="sqlite".
+                 Defaults to "lyretext_runs.db" in the working directory.
+    """
+    if backend == "sqlite":
+        try:
+            from langgraph.checkpoint.sqlite import SqliteSaver
+        except ImportError as exc:
+            raise ImportError(
+                "SQLite checkpointer requires langgraph-checkpoint-sqlite. "
+                "Install it with: pip install langgraph-checkpoint-sqlite"
+            ) from exc
+        path = db_path or "lyretext_runs.db"
+        # check_same_thread=False allows SQLite connection to be used across threads.
+        # This is necessary for LangGraph's executor which may run in different threads.
+        # See: https://docs.python.org/3/library/sqlite3.html#sqlite3.connect
+        conn = sqlite3.connect(path, check_same_thread=False)
+        return SqliteSaver(conn)
     return MemorySaver()
 
 
-def build_checkpoint_config(run_id: str | None = None) -> dict:
-    resolved_run_id = ensure_run_id(run_id)
-    return {"configurable": {"thread_id": resolved_run_id}}
-
-
-def build_resume_config(
-    run_id: str,
-    checkpoint_id: str,
-    checkpoint_ns: str = "",
+def build_checkpoint_config(
+    run_id: str | None = None,
+    runtime_options: dict[str, Any] | None = None,
 ) -> dict:
-    return {
-        "configurable": {
-            "thread_id": run_id,
-            "checkpoint_id": checkpoint_id,
-            "checkpoint_ns": checkpoint_ns,
-        }
-    }
+    resolved_run_id = ensure_run_id(run_id)
+    configurable: dict[str, Any] = {"thread_id": resolved_run_id}
+    if runtime_options is not None:
+        configurable["runtime_options"] = runtime_options
+    return {"configurable": configurable}
+
+
+def build_chapter_thread_id(run_id: str, chapter_id: str) -> str:
+    """Thread id for one chapter's independent graph invocation.
+
+    Each chapter gets its own checkpoint thread (rather than sharing the run's
+    thread via a Send fan-out) so that chapters can be resumed/executed
+    concurrently — LangGraph's Pregel model isn't safe for two independent
+    `.stream()`/`Command(resume=...)` calls to race against the same
+    thread_id, so a shared thread would force all chapter operations for a
+    run to serialize behind a single lock.
+    """
+    return f"{run_id}::chapter::{chapter_id}"
+
+
+def build_chapter_checkpoint_config(
+    run_id: str,
+    chapter_id: str,
+    runtime_options: dict[str, Any] | None = None,
+) -> dict:
+    configurable: dict[str, Any] = {"thread_id": build_chapter_thread_id(run_id, chapter_id)}
+    if runtime_options is not None:
+        configurable["runtime_options"] = runtime_options
+    return {"configurable": configurable}
 
 
 def extract_checkpoint_metadata(snapshot: Any) -> dict[str, str]:

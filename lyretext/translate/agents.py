@@ -7,12 +7,16 @@ from .state import ChapterTranslation
 from ..config import create_llm, resolve_node_opts
 from typing import Any
 from langchain.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
 from .structure import PreTeXtOutput
 
 _PROMPTS_FILE = Path(__file__).parent / "prompts" / "prompts.md"
 
-def translate_chapter(state: ChapterTranslation) -> dict[str, Any]:
-    opts = resolve_node_opts(state, "translate_chapter")
+def translate_chapter(
+    state: ChapterTranslation,
+    run_config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "translate_chapter", run_config)
     apply_mode = opts["apply_mode"]
     create_backup = opts["create_backup"]
     provider = opts["provider"]
@@ -20,12 +24,14 @@ def translate_chapter(state: ChapterTranslation) -> dict[str, Any]:
     output_path = state.get("output_path")
 
     prompt = str(load_prompts(_PROMPTS_FILE).get("translate_chapter"))
-    message = HumanMessage(
-        content = [
-            {"type": "text", "text": prompt},
-            {"type": "text", "text": str(structure)}
-        ]
-    )
+    content: list[dict] = [
+        {"type": "text", "text": prompt},
+        {"type": "text", "text": str(structure)},
+    ]
+    instruction = state.get("instruction")
+    if instruction:
+        content.append({"type": "text", "text": f"Additional instruction: {instruction}"})
+    message = HumanMessage(content=content)
     llm = create_llm(provider).with_structured_output(PreTeXtOutput.model_json_schema())
     response = llm.invoke([message])
     xml_content = response.get("xml", "")
@@ -45,10 +51,13 @@ def translate_chapter(state: ChapterTranslation) -> dict[str, Any]:
             f.write(xml_content)
         print(f"Written: {output_path}")
 
-    #return {"pretext_output": response}
+    return {"pretext_output": xml_content}
 
-def create_folder_structure(state: ChapterTranslation) -> dict[str, Any]:
-    opts = resolve_node_opts(state, "create_folder_structure")
+def create_folder_structure(
+    state: ChapterTranslation,
+    run_config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "create_folder_structure", run_config)
     provider = opts["provider"]
     structure = state["chapter_structure"]
     prompt = str(load_prompts(_PROMPTS_FILE).get("create_folder_structure"))

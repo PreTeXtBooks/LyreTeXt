@@ -3,7 +3,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from .state import SkeletonState
-from .agents import process_to_markdown, upload_project, structure_project, create_temp_directory
+from .agents import process_to_markdown, upload_project, structure_project, create_temp_directory, scan_project_resources
 
 
 def build_skeleton_graph():
@@ -13,11 +13,13 @@ def build_skeleton_graph():
     graph_builder.add_node("upload_project", upload_project)
     graph_builder.add_node("structure_project", structure_project)
     graph_builder.add_node("create_temp_directory", create_temp_directory)
+    graph_builder.add_node("scan_project_resources", scan_project_resources)
 
     graph_builder.add_edge(START, "process_to_markdown")
     graph_builder.add_edge("process_to_markdown", "upload_project")
     graph_builder.add_edge("upload_project", "structure_project")
     graph_builder.add_edge("structure_project", "create_temp_directory")
-    graph_builder.add_edge("create_temp_directory", END)
+    graph_builder.add_edge("create_temp_directory", "scan_project_resources")
+    graph_builder.add_edge("scan_project_resources", END)
 
     return graph_builder.compile()

@@ -4,6 +4,7 @@ import os
 import json
 from pathlib import Path
 from typing import Literal, Optional, Any
+from langchain_core.runnables import RunnableConfig
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
@@ -188,11 +189,15 @@ class ConfigResolver:
             raise ValueError(f"Unsupported config file format: {path.suffix}")
 
 
-def resolve_node_opts(state: dict, node_id: str) -> dict:
+def resolve_node_opts(
+    state: dict,
+    node_id: str,
+    run_config: RunnableConfig | None = None,
+) -> dict:
     """
-    Extract resolved runtime options for a specific node from graph state.
-    Prefers resolved_config (RuntimeConfig) if present in state, otherwise
-    falls back to reading flat legacy fields directly from state.
+    Extract resolved runtime options for a specific node.
+    Prefers runtime options passed via LangGraph configurable runtime context,
+    then falls back to legacy state fields for compatibility.
     
     Args:
         state: LangGraph node state dict
@@ -202,15 +207,18 @@ def resolve_node_opts(state: dict, node_id: str) -> dict:
         dict with keys: execution_mode, apply_mode, create_backup, provider,
                         llm_model, verbosity, pipeline
     """
-    resolved_config = state.get("resolved_config")
-    if resolved_config is not None:
-        return resolved_config.get_node_config(node_id)
-    # Fallback: read flat fields from state (legacy callers that don't yet pass resolved_config)
+    if run_config is not None:
+        configurable = run_config.get("configurable", {})
+        runtime_options = configurable.get("runtime_options")
+        if isinstance(runtime_options, dict):
+            return RuntimeConfig(**runtime_options).get_node_config(node_id)
+
+    # Fallback: read flat fields from state for legacy callers.
     return {
         "execution_mode": state.get("execution_mode", "direct"),
         "apply_mode": state.get("apply_mode", "auto_apply"),
         "create_backup": state.get("create_backup", False),
-        "provider": state.get("provider", "anthropic"),
+        "provider": state.get("provider", "gemini"),
         "llm_model": state.get("llm_model"),
         "verbosity": state.get("verbosity", "normal"),
         "pipeline": state.get("pipeline", "rmd"),

@@ -1,19 +1,24 @@
 import os
 import time
 
-from ..tools import load_prompts, create_files_from_json
+from ..utils.prompts import load_prompts
+from ..utils.filesystem import create_files_from_json
 from .state import SkeletonState
 from ..translate.state import ChapterTranslation
 from ..config import create_llm, initialise_client, resolve_node_opts
 from ..pipeline import PipelineRegistry
 from typing import Any
 from langchain.messages import HumanMessage
-from .structure import ChapterStructure, ProjectManifest, TemporaryManifest
+from langchain_core.runnables import RunnableConfig
+from .structure import ChapterStructure, TemporaryManifest
 from pathlib import Path
 _PROMPTS_FILE = Path(__file__).parent / "prompts" / "prompts.md"
 
-def read_chapter(state: ChapterTranslation) -> dict[Any]:
-    opts = resolve_node_opts(state, "read_chapter")
+def read_chapter(
+    state: ChapterTranslation,
+    run_config: RunnableConfig | None = None,
+) -> dict[Any]:
+    opts = resolve_node_opts(state, "read_chapter", run_config)
     execution_mode = opts["execution_mode"]
     provider = opts["provider"]
     source_path = state["source_path"]
@@ -45,8 +50,11 @@ def read_chapter(state: ChapterTranslation) -> dict[Any]:
     response = llm.invoke([message])
     return {"chapter_structure": response.get("content")}
 
-def process_to_markdown(state: SkeletonState) -> dict[str, Any]:
-    opts = resolve_node_opts(state, "process_to_markdown")
+def process_to_markdown(
+    state: SkeletonState,
+    run_config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "process_to_markdown", run_config)
     pipeline_name = opts["pipeline"]
     project_source = state["project_source"]
     temp_dir = state.get("temp_dir", "temp_output")
@@ -69,8 +77,11 @@ def process_to_markdown(state: SkeletonState) -> dict[str, Any]:
     return {"project_md_source": result["output_dir"], "temp_dir": temp_dir}
 
 
-def upload_project(state: SkeletonState) -> dict[str, Any]:
-    opts = resolve_node_opts(state, "upload_project")
+def upload_project(
+    state: SkeletonState,
+    run_config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "upload_project", run_config)
     execution_mode = opts["execution_mode"]
     provider = opts["provider"]
 
@@ -94,8 +105,11 @@ def upload_project(state: SkeletonState) -> dict[str, Any]:
 
     return {"source_files": files}
 
-def structure_project(state: SkeletonState) -> dict[str, Any]:
-    opts = resolve_node_opts(state, "structure_project")
+def structure_project(
+    state: SkeletonState,
+    run_config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "structure_project", run_config)
     execution_mode = opts["execution_mode"]
     provider = opts["provider"]
     prompt = str(load_prompts(_PROMPTS_FILE).get("project_structurer"))
@@ -151,25 +165,51 @@ def create_temp_directory(state: SkeletonState) -> dict[str, Any]:
 
 
 
-def read_project(state: SkeletonState) -> dict[str, Any]:  
-    """
-    Deprecated
-    """
-    opts = resolve_node_opts(state, "read_project")
-    provider = opts["provider"]
-    files = state.get("source_files", [])
-    prompt = str(load_prompts(_PROMPTS_FILE).get("read_project"))
-    message = HumanMessage(
-        content = [
-            {"type": "text", "text": prompt},
-        ] + 
-        [
-            {"type": "file", "file_id": file.uri, "mime_type": "text/markdown"} for file in files
-        ]
-    )
-    llm = create_llm(provider).with_structured_output(ProjectManifest.model_json_schema())
-    response = llm.invoke([message])
-    return {"manifest": response}
+# ---------------------------------------------------------------------------
+# P4 — Project resource scanner
+# ---------------------------------------------------------------------------
+
+# Patterns we surface as "project resources" in the UI sources subtab
+_RESOURCE_PATTERNS: list[tuple[str, str, str]] = [
+    ("_bookdown.yml",  "config",   "Bookdown project configuration"),
+    ("_output.yml",    "config",   "Output format configuration"),
+    ("_common.R",      "script",   "Shared R setup script"),
+    ("references.bib", "bib",      "BibTeX references"),
+    ("preamble.tex",   "tex",      "LaTeX preamble"),
+    ("*.bib",          "bib",      "BibTeX file"),
+    ("*.R",            "script",   "R script"),
+    ("images",         "dir",      "Images directory"),
+    ("figures",        "dir",      "Figures directory"),
+]
 
 
+def scan_project_resources(
+    state: SkeletonState,
+    run_config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Scan *project_source* for well-known resource files and directories.
+
+    Returns ``{"project_resources": [...]}`` where each entry is
+    ``{name, kind, desc, path}``.  Files/dirs that don't exist are skipped.
+    """
+    source = Path(state.get("project_source", ""))
+    if not source.exists():
+        return {"project_resources": []}
+
+    found: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for pattern, kind, desc in _RESOURCE_PATTERNS:
+        if kind == "dir":
+            d = source / pattern
+            if d.is_dir() and pattern not in seen:
+                found.append({"name": pattern, "kind": kind, "desc": desc, "path": str(d)})
+                seen.add(pattern)
+        else:
+            for p in sorted(source.glob(pattern)):
+                if p.name not in seen:
+                    found.append({"name": p.name, "kind": kind, "desc": desc, "path": str(p)})
+                    seen.add(p.name)
+
+    return {"project_resources": found}
 

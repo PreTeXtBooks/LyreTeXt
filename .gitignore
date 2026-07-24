@@ -220,7 +220,21 @@ __marimo__/
 # Project dev
 /demo
 /development
+/archive
 main*.py
 
 examples/*/output
 examples/*/temp
+
+# Runtime-generated run artifacts (not source)
+/lyretext_runs.db
+/lyretext_runs.db-shm
+/lyretext_runs.db-wal
+
+# Claude
+/.claude
+output_example.ptx
+
+# Running
+/output
+/temp
