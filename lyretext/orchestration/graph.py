@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from typing import Optional
+from pathlib import Path
 from langgraph.graph import END, START, StateGraph
-from ..config import create_llm
-from .state import ChapterTranslation, TranslationState, SkeletonState
+from ..config import get_resolved_config
+from .state import TranslationState
+from ..translate.state import ChapterTranslation
+from ..translate.graph import build_chapter_graph
+from ..read.graph import build_skeleton_graph
 
 """ def build_translation_graph():
     llm = create_llm("gemini")
@@ -28,38 +33,51 @@ from .state import ChapterTranslation, TranslationState, SkeletonState
 
     return graph_builder.compile() """
 
-from ..read.agents import read_chapter, read_project, upload_project, structure_project, create_temp_directory, process_to_markdown
-from ..translate.agents import translate_chapter
 from langgraph.types import Send
 
 
-def build_chapter_graph(provider: str = "gemini"):
-    llm = create_llm(provider)
-    graph_builder = StateGraph(ChapterTranslation)
+# ============================================================================
+# Configuration Resolution Helper (Phase 1)
+# ============================================================================
 
-    graph_builder.add_node("read_chapter", read_chapter)
-    graph_builder.add_node("translate_chapter", translate_chapter)
+def resolve_config_for_graph(
+    config_file: Optional[str | Path] = None,
+    runtime_payload: Optional[dict] = None,
+) -> dict:
+    """
+    Resolve configuration and return state dict with resolved_config field.
+    This wraps get_resolved_config() to integrate with graph invocation.
+    
+    Returns dict suitable for merging into graph input state.
+    """
+    resolved_config = get_resolved_config(
+        config_file=config_file,
+        runtime_payload=runtime_payload,
+    )
+    return {"resolved_config": resolved_config}
 
-    graph_builder.add_edge(START, "read_chapter")
-    graph_builder.add_edge("read_chapter", "translate_chapter")
-    graph_builder.add_edge("translate_chapter", END)
-    # graph_builder.add_edge("read_chapter", END)
 
-    return graph_builder.compile()
-
+# ============================================================================
+# Graph Builders
+# ============================================================================
 
 def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
     manifest = state.get("manifest", [])
+    resolved_config = state.get("resolved_config")
+    if resolved_config is None:
+        raise ValueError(
+            "resolved_config is required in TranslationState. "
+            "Use resolve_config_for_graph() or get_resolved_config() to build it "
+            "before invoking the workflow graph."
+        )
+    global_opts = resolved_config.global_options
     return [
         Send(
             "translator_graph",
             {
                 "source_path": chapter["source_path"],
                 "output_path": chapter["output_path"],
-                "execution_mode": state.get("execution_mode", "upload"),
-                "apply_mode": state.get("apply_mode", "auto_apply"),
-                "create_backup": state.get("create_backup", False),
-                "provider": state.get("provider", "gemini"),
+                "resolved_config": resolved_config,
             },
         )
         for chapter in manifest
@@ -67,41 +85,24 @@ def split_manifest(state: TranslationState) -> Send[ChapterTranslation]:
 
 
 
-def build_skeleton_agent(provider: str = "gemini"):
-    llm = create_llm(provider)
-    graph_builder = StateGraph(SkeletonState)
-
-
-    graph_builder.add_node("process_to_markdown", process_to_markdown)
-    graph_builder.add_node("structure_project", structure_project)
-    graph_builder.add_node("upload_project", upload_project)
-    graph_builder.add_node("create_temp_directory", create_temp_directory)
-    #graph_builder.add_node("read_project", read_project)
-
-    graph_builder.add_edge(START, "process_to_markdown")
-    graph_builder.add_edge("process_to_markdown", "upload_project")
-    graph_builder.add_edge("upload_project", "structure_project")
-    graph_builder.add_edge("structure_project", "create_temp_directory")
-    graph_builder.add_edge("create_temp_directory", END)
-
-    return graph_builder.compile()
-
-def build_workflow_graph(provider: str = "gemini"):
-    llm = create_llm(provider)
+def build_workflow_graph():
     graph_builder = StateGraph(TranslationState)
 
-    chapter_graph = build_chapter_graph(provider)
-    skeleton_graph = build_skeleton_agent(provider)
+    chapter_graph = build_chapter_graph()
+    skeleton_graph = build_skeleton_graph()
 
     def call_skeleton_graph(state):
+        resolved_config = state.get("resolved_config")
+        if resolved_config is None:
+            raise ValueError(
+                "resolved_config is required in TranslationState. "
+                "Use resolve_config_for_graph() or get_resolved_config() before invoking."
+            )
         output = skeleton_graph.invoke({
             "project_source": state["project_source"],
             "temp_dir": state["temp_dir"],
             "output_dir": state["output_dir"],
-            "execution_mode": state.get("execution_mode", "upload"),
-            "apply_mode": state.get("apply_mode", "auto_apply"),
-            "create_backup": state.get("create_backup", False),
-            "provider": state.get("provider", provider),
+            "resolved_config": resolved_config,
         })
         return {"manifest": output.get("manifest", [])}
 

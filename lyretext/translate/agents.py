@@ -2,21 +2,24 @@ from pathlib import Path
 import shutil
 from time import time
 
-from ..tools import load_prompts
-from ..orchestration.state import ChapterTranslation
-from ..config import create_llm
+from ..utils import load_prompts
+from .state import ChapterTranslation
+from ..config import create_llm, resolve_node_opts
 from typing import Any
 from langchain.messages import HumanMessage
 from .structure import PreTeXtOutput
 
+_PROMPTS_FILE = Path(__file__).parent / "prompts" / "prompts.md"
+
 def translate_chapter(state: ChapterTranslation) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "translate_chapter")
+    apply_mode = opts["apply_mode"]
+    create_backup = opts["create_backup"]
+    provider = opts["provider"]
     structure = state["chapter_structure"]
     output_path = state.get("output_path")
-    apply_mode = state.get("apply_mode", "auto_apply")
-    create_backup = state.get("create_backup", False)
-    provider = state.get("provider", "gemini")
 
-    prompt = str(load_prompts("lyretext\\translate\\prompts\\prompts.md").get("translate_chapter"))
+    prompt = str(load_prompts(_PROMPTS_FILE).get("translate_chapter"))
     message = HumanMessage(
         content = [
             {"type": "text", "text": prompt},
@@ -45,15 +48,17 @@ def translate_chapter(state: ChapterTranslation) -> dict[str, Any]:
     #return {"pretext_output": response}
 
 def create_folder_structure(state: ChapterTranslation) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "create_folder_structure")
+    provider = opts["provider"]
     structure = state["chapter_structure"]
-    prompt = str(load_prompts("lyretext\\translate\\prompts\\prompts.md").get("create_folder_structure"))
+    prompt = str(load_prompts(_PROMPTS_FILE).get("create_folder_structure"))
     message = HumanMessage(
         content = [
             {"type": "text", "text": prompt},
             {"type": "text", "text": str(structure)}
         ]
     )
-    llm = create_llm("gemini")
+    llm = create_llm(provider)
     response = llm.invoke([message])
     return {"folder_structure": response}
 

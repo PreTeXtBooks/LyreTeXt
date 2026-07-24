@@ -1,23 +1,24 @@
 import os
-import subprocess
 import time
 
-from ..tools import load_prompts, split_markdown_by_h1, create_files_from_json, find_rscript, get_before_chapter_scripts
-from ..orchestration.state import TestState, TranslationState, ChapterTranslation, SkeletonState
-from ..config import create_llm, initialise_client
+from ..tools import load_prompts, create_files_from_json
+from .state import SkeletonState
+from ..translate.state import ChapterTranslation
+from ..config import create_llm, initialise_client, resolve_node_opts
+from ..pipeline import PipelineRegistry
 from typing import Any
 from langchain.messages import HumanMessage
-from google import genai
 from .structure import ChapterStructure, ProjectManifest, TemporaryManifest
 from pathlib import Path
-
+_PROMPTS_FILE = Path(__file__).parent / "prompts" / "prompts.md"
 
 def read_chapter(state: ChapterTranslation) -> dict[Any]:
-    execution_mode = state.get("execution_mode", "upload")
-    provider = state.get("provider", "gemini")
+    opts = resolve_node_opts(state, "read_chapter")
+    execution_mode = opts["execution_mode"]
+    provider = opts["provider"]
     source_path = state["source_path"]
     print("Reading chapter from:", source_path)
-    prompt = str(load_prompts("lyretext\\read\\prompts\\prompts.md").get("read_chapter"))
+    prompt = str(load_prompts(_PROMPTS_FILE).get("read_chapter"))
 
     if execution_mode == "direct":
         content = Path(source_path).read_text(encoding="utf-8")
@@ -45,47 +46,33 @@ def read_chapter(state: ChapterTranslation) -> dict[Any]:
     return {"chapter_structure": response.get("content")}
 
 def process_to_markdown(state: SkeletonState) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "process_to_markdown")
+    pipeline_name = opts["pipeline"]
     project_source = state["project_source"]
-    project_source_path = Path(project_source)
     temp_dir = state.get("temp_dir", "temp_output")
-    temp_dir_path = Path(temp_dir) / "markdown"
-    if not temp_dir_path.exists():
-        temp_dir_path.mkdir(parents=True)
-    print("creating at", temp_dir_path)
 
-    rscript = os.environ.get("RSCRIPT_EXE") or find_rscript()
-
-    for file in project_source_path.iterdir():
-        if not (file.is_file() and file.suffix in [".rmd", ".Rmd", ".qmd"]):
-            continue
-        print(f"Processing {file} to markdown...")
-        destination_file = Path(temp_dir_path) / file.with_suffix(".md").name
-
-        before_chapter_script = get_before_chapter_scripts(project_source)
-        knit_expr = ""
-        if before_chapter_script:
-            for script in before_chapter_script:
-                script_path = Path(project_source) / script
-                knit_expr += f"source('{script_path.as_posix()}'); "
-
-
-        knit_expr += f"knitr::knit('{file.as_posix()}', output='{destination_file.as_posix()}')"
-        print("knit expression:", knit_expr)
-        result = subprocess.run(
-            [rscript, "-e", knit_expr],
-            text=True,
-            capture_output=True,
-            #cwd=project_source
+    pipeline = PipelineRegistry.get(pipeline_name)
+    if pipeline is None:
+        raise ValueError(
+            f"Unknown pipeline '{pipeline_name}'. "
+            f"Available: {PipelineRegistry.list_available()}"
         )
 
-        print("knitr result:", result)
+    result = pipeline.compile_to_markdown(
+        project_path=project_source,
+        temp_dir=temp_dir,
+    )
 
-    return {"project_md_source": temp_dir_path, "temp_dir": temp_dir}
+    if result["errors"]:
+        print(f"[WARN] Compilation errors: {result['errors']}")
+
+    return {"project_md_source": result["output_dir"], "temp_dir": temp_dir}
 
 
 def upload_project(state: SkeletonState) -> dict[str, Any]:
-    execution_mode = state.get("execution_mode", "upload")
-    provider = state.get("provider", "gemini")
+    opts = resolve_node_opts(state, "upload_project")
+    execution_mode = opts["execution_mode"]
+    provider = opts["provider"]
 
     if execution_mode == "direct":
         # In direct mode file content is read inline; no upload needed.
@@ -108,9 +95,10 @@ def upload_project(state: SkeletonState) -> dict[str, Any]:
     return {"source_files": files}
 
 def structure_project(state: SkeletonState) -> dict[str, Any]:
-    execution_mode = state.get("execution_mode", "upload")
-    provider = state.get("provider", "gemini")
-    prompt = str(load_prompts("lyretext\\read\\prompts\\prompts.md").get("project_structurer"))
+    opts = resolve_node_opts(state, "structure_project")
+    execution_mode = opts["execution_mode"]
+    provider = opts["provider"]
+    prompt = str(load_prompts(_PROMPTS_FILE).get("project_structurer"))
 
     if execution_mode == "direct":
         project_md_source = state.get("project_md_source")
@@ -167,8 +155,10 @@ def read_project(state: SkeletonState) -> dict[str, Any]:
     """
     Deprecated
     """
-    files = state.get("source_files", [])          
-    prompt = str(load_prompts("lyretext\\read\\prompts\\prompts.md").get("read_project"))
+    opts = resolve_node_opts(state, "read_project")
+    provider = opts["provider"]
+    files = state.get("source_files", [])
+    prompt = str(load_prompts(_PROMPTS_FILE).get("read_project"))
     message = HumanMessage(
         content = [
             {"type": "text", "text": prompt},
@@ -177,7 +167,7 @@ def read_project(state: SkeletonState) -> dict[str, Any]:
             {"type": "file", "file_id": file.uri, "mime_type": "text/markdown"} for file in files
         ]
     )
-    llm = create_llm("gemini").with_structured_output(ProjectManifest.model_json_schema())
+    llm = create_llm(provider).with_structured_output(ProjectManifest.model_json_schema())
     response = llm.invoke([message])
     return {"manifest": response}
 
