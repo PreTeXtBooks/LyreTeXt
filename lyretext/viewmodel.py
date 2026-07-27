@@ -459,12 +459,21 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
             "available_actions": _available_actions(lifecycle=lifecycle, pending_interrupt=pending_intr),
         })
 
-    # Output .ptx listing
+    # Output .ptx listing — ordered to match the manifest (front matter,
+    # chapters in sequence, back matter, appendix), not alphabetically; a
+    # plain glob().sort() put e.g. "app-appendix.ptx" before "chapter-1-...".
+    manifest_order = {
+        Path(ch["output_path"]).name: i for i, ch in enumerate(manifest)
+    }
     output_files: list[dict[str, Any]] = []
     if output_dir:
         out_path = Path(output_dir)
         if out_path.exists():
-            for ptx in sorted(out_path.glob("*.ptx")):
+            ptx_files = sorted(
+                out_path.glob("*.ptx"),
+                key=lambda p: (manifest_order.get(p.name, len(manifest_order)), p.name),
+            )
+            for ptx in ptx_files:
                 output_files.append({
                     "file": ptx.name,
                     "path": str(ptx),

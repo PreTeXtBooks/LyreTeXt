@@ -28,6 +28,7 @@ from lyretext.service import (
     get_output,
     get_run_view,
     remap_chapter_source,
+    reopen_chapter_for_action,
     write_chapter_file_and_trigger,
 )
 from lyretext.review.structure import Issue, ReviewReport
@@ -399,6 +400,42 @@ class TestBuildViewModel:
 
         assert len(result["output"]) == 1
         assert result["output"][0]["file"] == "chapter-1.ptx"
+
+    def test_output_files_ordered_by_manifest_not_alphabetically(self, tmp_path):
+        """"app-appendix.ptx" sorts before "chapter-1-intro.ptx"
+        alphabetically, but the appendix comes after the chapter in the
+        manifest — the output listing must follow manifest order."""
+        names = ["fm-foreword.ptx", "chapter-1-intro.ptx", "app-appendix.ptx", "bm-references.ptx"]
+        for name in names:
+            (tmp_path / name).write_text("<chapter/>")
+
+        manifest = [
+            {"name": "Foreword", "source_path": "fm-foreword.rmd", "output_path": str(tmp_path / "fm-foreword.ptx"), "type": "frontmatter"},
+            {"name": "Intro", "source_path": "ch1.rmd", "output_path": str(tmp_path / "chapter-1-intro.ptx"), "type": "chapter"},
+            {"name": "Appendix", "source_path": "app.rmd", "output_path": str(tmp_path / "app-appendix.ptx"), "type": "appendix"},
+            {"name": "References", "source_path": "refs.rmd", "output_path": str(tmp_path / "bm-references.ptx"), "type": "backmatter"},
+        ]
+        snap = _make_snapshot({
+            "project_source": str(tmp_path),
+            "output_dir": str(tmp_path),
+            "manifest": manifest,
+            "chapter_status": {},
+            "human_signoffs": {},
+            "project_type": "rmd",
+            "project_resources": [],
+        })
+        graph = self._make_graph_mock(snap)
+        chapter_graph = self._undispatched_chapter_graph()
+
+        with (
+            patch("lyretext.viewmodel._active_workflow_graph", return_value=graph),
+            patch("lyretext.viewmodel._active_chapter_graph", return_value=chapter_graph),
+        ):
+            from lyretext.orchestration.checkpointing import build_checkpointer
+            cp = build_checkpointer("memory")
+            result = build_view_model("run-abc", cp)
+
+        assert [f["file"] for f in result["output"]] == names
 
     def test_two_chapters_have_independent_gate_state(self, tmp_path):
         """Regression guard for the concurrency fix: one chapter's pending
@@ -798,3 +835,61 @@ class TestMockEnabled:
         from lyretext.orchestration.graph import _mock_enabled
         monkeypatch.delenv("LYRETEXT_MOCK", raising=False)
         assert _mock_enabled() is False
+
+
+# ---------------------------------------------------------------------------
+# Integration: reopening an already-resolved chapter thread
+# ---------------------------------------------------------------------------
+
+class TestReopenChapterForAction:
+    """Real (non-mocked) integration coverage — this exercises actual
+    LangGraph update_state(as_node=...) + stream(None, ...) mechanics, which
+    a fully-mocked test wouldn't catch (the checkpoint-revert feature needed
+    a real run to surface its checkpoint_ns bug; this is the same class of
+    risk). Drives a chapter all the way to approved, then reopens it."""
+
+    def _dispatch_and_approve(self, tmp_path, monkeypatch, run_id="run-reopen", chapter_id="ch1"):
+        monkeypatch.setenv("LYRETEXT_MOCK", "1")
+        monkeypatch.chdir(tmp_path)
+        from lyretext.orchestration.checkpointing import build_checkpointer
+        cp = build_checkpointer("memory")
+        chapter = {"source_path": "ch1.rmd", "output_path": "ch1.ptx"}
+        with (
+            patch("lyretext.service._read_gate_approved", return_value=True),
+            patch("lyretext.service._find_chapter_in_manifest", return_value=chapter),
+        ):
+            apply_chapter_command(run_id, chapter_id, "translate", cp)
+            apply_chapter_command(run_id, chapter_id, "approve", cp)
+        return cp, run_id, chapter_id
+
+    def test_chapter_is_genuinely_terminal_after_approve(self, tmp_path, monkeypatch):
+        cp, run_id, chapter_id = self._dispatch_and_approve(tmp_path, monkeypatch)
+        from lyretext.orchestration.graph import get_chapter_snapshot
+        snap = get_chapter_snapshot(run_id, chapter_id, checkpointer=cp)
+        assert not snap.interrupts
+        assert not snap.next
+
+    def test_revalidate_reopens_a_terminal_chapter(self, tmp_path, monkeypatch):
+        cp, run_id, chapter_id = self._dispatch_and_approve(tmp_path, monkeypatch)
+
+        result = apply_chapter_command(run_id, chapter_id, "revalidate", cp)
+
+        assert result.get("interrupted") is True
+        pending = result.get("pending_interrupts") or []
+        assert any(p.get("type") == "chapter_review" for p in pending)
+
+    def test_retry_reopens_a_terminal_chapter_and_bumps_iteration(self, tmp_path, monkeypatch):
+        cp, run_id, chapter_id = self._dispatch_and_approve(tmp_path, monkeypatch)
+
+        result = apply_chapter_command(run_id, chapter_id, "retry", cp)
+
+        pending = result.get("pending_interrupts") or []
+        review = next(p for p in pending if p.get("type") == "chapter_review")
+        assert review["value"]["iteration_count"] == 2
+
+    def test_unsupported_action_on_terminal_chapter_returns_error(self, tmp_path, monkeypatch):
+        cp, run_id, chapter_id = self._dispatch_and_approve(tmp_path, monkeypatch)
+
+        result = reopen_chapter_for_action(run_id, chapter_id, "bogus", cp)
+
+        assert "error" in result

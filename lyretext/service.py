@@ -134,6 +134,60 @@ def _read_gate_approved(run_id: str, checkpointer: BaseCheckpointSaver) -> bool:
     return bool(snapshot.values.get("human_signoffs", {}).get("read->translate"))
 
 
+_REOPEN_TARGET_NODE = {
+    "retry": "translate_chapter",
+    "approve_after_escalation": "translate_chapter",
+    "revalidate": "review_chapter",
+    "recompile_source": "read_chapter",
+}
+
+
+def reopen_chapter_for_action(
+    run_id: str,
+    chapter_id: str,
+    action: str,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    instruction: str | None = None,
+) -> dict[str, Any]:
+    """Reopen an already-resolved chapter thread (approved/skipped, at END)
+    for a follow-up action.
+
+    Once chapter_review_gate has resolved and the thread reaches END, there
+    is no pending interrupt left to Command(resume=...) into — LangGraph has
+    nothing to resume, so a plain resume_chapter_graph call silently no-ops
+    (this is why "Revalidate"/"Retry translate" on an approved chapter used
+    to do nothing). This forges a fresh transition as if chapter_review_gate
+    had just produced the given decision — the same values it sets itself in
+    chapter_review_gate() — via update_state(as_node="chapter_review_gate"),
+    which redirects the graph's next node, then actually runs it forward.
+    """
+    target_node = _REOPEN_TARGET_NODE.get(action)
+    if target_node is None:
+        return {"error": f"{action!r} cannot be used to reopen an already-resolved chapter"}
+
+    chapter_graph = _active_chapter_graph(checkpointer)
+    base_config = build_chapter_checkpoint_config(run_id, chapter_id)
+    snapshot = chapter_graph.get_state(base_config)
+    if snapshot is None or not snapshot.values:
+        return {"error": f"chapter {chapter_id!r} of run {run_id!r} has no checkpoint to reopen"}
+
+    iteration_count = snapshot.values.get("iteration_count", 1)
+    values: dict[str, Any] = {
+        "chapter_next": target_node,
+        "retry_requested": target_node == "translate_chapter",
+        "iteration_count": iteration_count if target_node == "review_chapter" else iteration_count + 1,
+    }
+    if instruction:
+        values["instruction"] = instruction
+
+    chapter_graph.update_state(base_config, values, as_node="chapter_review_gate")
+    result = _run_with_checkpoint_metadata(chapter_graph, None, checkpoint_config=base_config)
+    result.setdefault("run_id", run_id)
+    result.setdefault("chapter_id", chapter_id)
+    return result
+
+
 def apply_chapter_command(
     run_id: str,
     chapter_id: str,
@@ -195,6 +249,17 @@ def apply_chapter_command(
                 checkpointer=checkpointer,
             )
         return result
+
+    # A thread with nothing pending (next == () and no interrupts) has
+    # already reached END — Command(resume=...) has nothing to attach to and
+    # silently no-ops. Reopen it explicitly for actions that make sense to
+    # replay after approval; anything else (e.g. "approve" again) falls
+    # through to the normal resume, which harmlessly no-ops as before.
+    is_terminal = not snapshot.next and not getattr(snapshot, "interrupts", None)
+    if is_terminal and action in _REOPEN_TARGET_NODE:
+        return reopen_chapter_for_action(
+            run_id, chapter_id, action, checkpointer, instruction=instruction
+        )
 
     resume_value: dict[str, Any] = {"action": action}
     if instruction:
@@ -347,13 +412,16 @@ def write_chapter_file_and_trigger(
     compilation/validation instead of a full retranslate.
 
     target="source": writes the chapter's source file. If the chapter is
-        already dispatched and paused at its review gate, immediately
-        triggers recompile_source (re-read the edited source, retranslate).
-        If not yet dispatched, the edit simply takes effect whenever the
-        chapter is later dispatched — nothing further to trigger now.
+        already dispatched — paused at its review gate, or already resolved
+        (approved/skipped) — immediately triggers recompile_source (re-read
+        the edited source, retranslate). If not yet dispatched, the edit
+        simply takes effect whenever the chapter is later dispatched —
+        nothing further to trigger now.
     target="output": writes the chapter's translated .ptx file directly, then
-        triggers revalidate (re-run review against the edited artifact) if
-        the chapter is currently paused at its review gate.
+        triggers revalidate (re-run review against the edited artifact) —
+        again, whether the chapter is currently paused at its review gate or
+        already resolved (apply_chapter_command reopens resolved threads;
+        see reopen_chapter_for_action).
     """
     if target not in ("source", "output"):
         return {"error": "target must be 'source' or 'output'"}
@@ -367,9 +435,9 @@ def write_chapter_file_and_trigger(
     path.write_text(content, encoding="utf-8")
 
     snapshot = get_chapter_snapshot(run_id, chapter_id, checkpointer=checkpointer)
-    at_gate = bool(snapshot is not None and getattr(snapshot, "interrupts", None))
+    dispatched = snapshot is not None
 
-    if not at_gate:
+    if not dispatched:
         return {
             "run_id": run_id,
             "chapter_id": chapter_id,
