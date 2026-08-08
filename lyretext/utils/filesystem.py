@@ -17,7 +17,7 @@ def create_files_from_json(target_dir: str, file_data: list[dict[str, str]]) -> 
     base_path = Path(target_dir)
     base_path.mkdir(parents=True, exist_ok=True)
 
-    print(file_data, type(file_data))
+    #print(file_data, type(file_data))
 
     for item in file_data:
         file_name = item.get("file_name")

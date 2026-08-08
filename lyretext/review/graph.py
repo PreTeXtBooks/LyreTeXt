@@ -3,8 +3,12 @@
 Architecture
 ============
 START → fan_out_checks (Send → run_check_<id> per spec, parallel)
-      → [all run_check nodes] → collect_issues
-      → policy_route → apply_fixes (optional) → finalize_review → END
+      → [all check nodes] → collect_issues → finalize_review → END
+
+The review subgraph is **read-only**: it reports, it does not repair. Fixing is
+the editing agent's job and lives on the chapter graph as a checkpointed node
+(lyretext.edit.agents.edit_chapter), so it is visible in the jobs view, bounded
+by max_edit_iterations, and switchable off via auto_edit.
 
 The ``issues`` channel on ChapterReview carries an operator.add reducer so
 parallel check-agent branches merge their findings automatically — a native
@@ -17,7 +21,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from .agents import apply_fixes, finalize_review, run_check
+from .agents import finalize_review, run_check
 from .checks import get_registry
 from .state import ChapterReview
 
@@ -31,12 +35,6 @@ def _fan_out_checks(specs):
     return _route
 
 
-def _policy_route(state: ChapterReview) -> str:
-    """Route to apply_fixes if any auto_fixable, unresolved issues exist."""
-    fixable = [i for i in state.get("issues", []) if i.auto_fixable and not i.auto_fixed]
-    return "apply_fixes" if fixable else "finalize_review"
-
-
 def build_review_graph(target_stage: str = "translate"):
     """Build and compile the review subgraph for *target_stage*.
 
@@ -48,14 +46,15 @@ def build_review_graph(target_stage: str = "translate"):
 
     graph_builder = StateGraph(ChapterReview)
     graph_builder.add_node("finalize_review", finalize_review)
-    graph_builder.add_node("apply_fixes", apply_fixes)
-    graph_builder.add_edge("apply_fixes", "finalize_review")
     graph_builder.add_edge("finalize_review", END)
 
     if specs:
-        # Register one node per check spec
+        # Register one node per check spec — a deterministic impl when the spec
+        # provides one, otherwise the LLM-backed run_check factory.
         for spec in specs:
-            graph_builder.add_node(f"run_check_{spec.id}", run_check(spec))
+            graph_builder.add_node(
+                f"run_check_{spec.id}", spec.impl or run_check(spec)
+            )
 
         # collect_issues: no-op; just a convergence point for all check branches
         def _collect(state: ChapterReview) -> dict:
@@ -67,7 +66,7 @@ def build_review_graph(target_stage: str = "translate"):
         for spec in specs:
             graph_builder.add_edge(f"run_check_{spec.id}", "collect_issues")
 
-        graph_builder.add_conditional_edges("collect_issues", _policy_route)
+        graph_builder.add_edge("collect_issues", "finalize_review")
     else:
         # No checks registered for this stage — straight to finalize
         graph_builder.add_edge(START, "finalize_review")

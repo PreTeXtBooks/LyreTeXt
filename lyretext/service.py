@@ -13,8 +13,9 @@ get_output         – list generated .ptx files for a run
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
@@ -32,11 +33,14 @@ from .orchestration.graph import (
     _run_with_checkpoint_metadata,
     get_chapter_snapshot,
     get_run_manifest,
+    get_run_source_context,
     invoke_chapter_graph,
     invoke_workflow_graph,
     resume_chapter_graph,
     resume_workflow_graph,
 )
+from .render import render_pretext
+from .review.grouping import group_key
 from .viewmodel import build_view_model, load_chapter_findings
 
 _DEFAULT_CONFIG_FILE = Path("config.yml")
@@ -95,9 +99,25 @@ def start_run(
 # Read
 # ---------------------------------------------------------------------------
 
-def get_run_view(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str, Any]:
-    """Return the read-model view dict for *run_id*."""
-    return build_view_model(run_id, checkpointer)
+def get_run_view(
+    run_id: str,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    executing_chapters: Iterable[str] | None = None,
+    run_executing: bool = False,
+) -> dict[str, Any]:
+    """Return the read-model view dict for *run_id*.
+
+    *executing_chapters*/*run_executing* are forwarded to build_view_model so a
+    chapter that is mid-execution isn't mistaken for one that stopped part-way
+    — see the note there.
+    """
+    return build_view_model(
+        run_id,
+        checkpointer,
+        executing_chapters=executing_chapters,
+        run_executing=run_executing,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +158,14 @@ _REOPEN_TARGET_NODE = {
     "retry": "translate_chapter",
     "approve_after_escalation": "translate_chapter",
     "revalidate": "review_chapter",
-    "recompile_source": "read_chapter",
+    # translate_chapter converts straight from source_path via pandoc, so
+    # re-running it is exactly what "recompile from source" means now.
+    "recompile_source": "translate_chapter",
 }
+
+# With an instruction attached, these actions go to the editing agent instead —
+# conversion is deterministic and cannot act on natural language.
+_INSTRUCTION_ACTIONS = ("retry", "approve_after_escalation")
 
 
 def reopen_chapter_for_action(
@@ -166,6 +192,11 @@ def reopen_chapter_for_action(
     if target_node is None:
         return {"error": f"{action!r} cannot be used to reopen an already-resolved chapter"}
 
+    # Mirrors chapter_review_gate's own dispatch: a natural-language
+    # instruction is only actionable by the editing agent.
+    if instruction and action in _INSTRUCTION_ACTIONS:
+        target_node = "edit_chapter"
+
     chapter_graph = _active_chapter_graph(checkpointer)
     base_config = build_chapter_checkpoint_config(run_id, chapter_id)
     snapshot = chapter_graph.get_state(base_config)
@@ -175,11 +206,13 @@ def reopen_chapter_for_action(
     iteration_count = snapshot.values.get("iteration_count", 1)
     values: dict[str, Any] = {
         "chapter_next": target_node,
-        "retry_requested": target_node == "translate_chapter",
+        "retry_requested": target_node in ("translate_chapter", "edit_chapter"),
         "iteration_count": iteration_count if target_node == "review_chapter" else iteration_count + 1,
     }
     if instruction:
         values["instruction"] = instruction
+        # A fresh human instruction earns a fresh edit budget.
+        values["edit_iterations"] = 0
 
     chapter_graph.update_state(base_config, values, as_node="chapter_review_gate")
     result = _run_with_checkpoint_metadata(chapter_graph, None, checkpoint_config=base_config)
@@ -222,6 +255,7 @@ def apply_chapter_command(
         if chapter is None:
             return {"error": f"chapter {chapter_id!r} not found in run {run_id!r}"}
 
+        source_context = get_run_source_context(run_id, checkpointer=checkpointer)
         result = invoke_chapter_graph(
             run_id=run_id,
             chapter_id=chapter_id,
@@ -229,6 +263,7 @@ def apply_chapter_command(
                 "source_path": chapter["source_path"],
                 "output_path": chapter["output_path"],
                 "chapter_id": chapter_id,
+                **source_context,
             },
             config_file=_config_file(),
             checkpointer=checkpointer,
@@ -404,6 +439,8 @@ def write_chapter_file_and_trigger(
     target: str,
     content: str,
     checkpointer: BaseCheckpointSaver,
+    *,
+    trigger: bool = True,
 ) -> dict[str, Any]:
     """Write directly-edited source or translated-output text for a chapter.
 
@@ -422,6 +459,14 @@ def write_chapter_file_and_trigger(
         again, whether the chapter is currently paused at its review gate or
         already resolved (apply_chapter_command reopens resolved threads;
         see reopen_chapter_for_action).
+
+    trigger=False writes the file and reports the action that *would* have been
+    triggered as "pending_action", without running it. The write is near
+    instant; the recompile/revalidate behind it is a full pipeline run taking
+    tens of seconds, so the HTTP layer uses this to answer as soon as the edit
+    is safely on disk and run the command in the background (see
+    api.write_chapter_file). Callers outside the API keep the default and get
+    the whole thing synchronously.
     """
     if target not in ("source", "output"):
         return {"error": "target must be 'source' or 'output'"}
@@ -444,9 +489,20 @@ def write_chapter_file_and_trigger(
             "target": target,
             "status": "written",
             "triggered": None,
+            "pending_action": None,
         }
 
     action = "recompile_source" if target == "source" else "revalidate"
+    if not trigger:
+        return {
+            "run_id": run_id,
+            "chapter_id": chapter_id,
+            "target": target,
+            "status": "written",
+            "triggered": None,
+            "pending_action": action,
+        }
+
     result = apply_chapter_command(run_id, chapter_id, action, checkpointer)
     result["target"] = target
     result["triggered"] = action
@@ -467,6 +523,306 @@ def get_chapter_findings(
         "run_id": run_id,
         "chapter_id": chapter_id,
         "findings": load_chapter_findings(output_dir, chapter_id),
+    }
+
+
+def _findings_sidecar_path(
+    run_id: str, chapter_id: str, checkpointer: BaseCheckpointSaver
+) -> Path | None:
+    """Resolve the .lyretext/<chapter_id>.findings.json path for a chapter, or None."""
+    chapter = _find_chapter_in_manifest(run_id, chapter_id, checkpointer)
+    if chapter is None:
+        return None
+    output_path = chapter.get("output_path", "")
+    if not output_path:
+        return None
+    return Path(output_path).parent / ".lyretext" / f"{chapter_id}.findings.json"
+
+
+def _read_findings_sidecar(
+    run_id: str, chapter_id: str, checkpointer: BaseCheckpointSaver
+) -> tuple[Path | None, dict[str, Any]]:
+    """Return (sidecar_path, findings), or (None, {"error": ...}) if unavailable."""
+    sidecar_path = _findings_sidecar_path(run_id, chapter_id, checkpointer)
+    if sidecar_path is None:
+        return None, {"error": f"chapter {chapter_id!r} not found in run {run_id!r}"}
+    if not sidecar_path.exists():
+        return None, {"error": f"no findings sidecar for chapter {chapter_id!r}"}
+    return sidecar_path, json.loads(sidecar_path.read_text(encoding="utf-8"))
+
+
+def _select_issues(
+    issues: list[dict[str, Any]], issue_indices: Iterable[int], chapter_id: str
+) -> tuple[list[int], dict[str, Any] | None]:
+    """Validate and de-duplicate issue indices, preserving sidecar order.
+
+    Ordering matters for the grouped operations below: the instruction handed to
+    the editing agent lists line numbers, and those read far more naturally in
+    document order than in whatever order the UI happened to collect them.
+    """
+    wanted = {int(i) for i in issue_indices}
+    if not wanted:
+        return [], {"error": "at least one issue index is required"}
+    out_of_range = sorted(i for i in wanted if i < 0 or i >= len(issues))
+    if out_of_range:
+        return [], {
+            "error": (
+                f"issue index {out_of_range[0]} out of range for chapter {chapter_id!r}"
+            )
+        }
+    return [i for i in range(len(issues)) if i in wanted], None
+
+
+def _issue_group_key(issue: dict[str, Any]) -> str:
+    """The stored group_key, recomputed for sidecars written before it existed."""
+    return issue.get("group_key") or group_key(
+        check_id=issue.get("check_id"),
+        message=issue.get("message"),
+        suggestion=issue.get("suggestion"),
+    )
+
+
+def _fix_instruction(selected: list[dict[str, Any]]) -> str:
+    """Build the editing-agent instruction for an arbitrary set of findings.
+
+    The set may be one finding, one group of occurrences of a single systematic
+    problem, or a queue the user assembled across several unrelated ones — all
+    three arrive here, because the whole point is that they cost one edit_chapter
+    run between them rather than one each.
+
+    Findings are re-grouped by group_key so a repeated problem is stated once
+    with its lines enumerated, rather than restated per occurrence: that is both
+    clearer to the model and markedly cheaper in tokens on the twenty-occurrence
+    case this exists for.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for issue in selected:
+        grouped.setdefault(_issue_group_key(issue), []).append(issue)
+
+    def _at(issue: dict[str, Any]) -> str:
+        return f"Line {issue['line']}: " if issue.get("line") is not None else ""
+
+    def _detail(issue: dict[str, Any]) -> str:
+        text = (issue.get("message") or "").rstrip()
+        if issue.get("suggestion"):
+            text = f"{text.rstrip('.')}. Fix: {issue['suggestion']}"
+        return text
+
+    def _describe(occurrences: list[dict[str, Any]]) -> str:
+        # Findings group by the *shape* of their fix, so a group's occurrences
+        # may still carry per-instance detail — one xml:id per definition, say.
+        # Restating only the first occurrence's text would tell the agent to
+        # apply that instance's fix everywhere, so enumerate when they differ
+        # and collapse only when they genuinely are the same words. The
+        # collapsed form is what keeps the twenty-occurrence case cheap.
+        distinct = {(i.get("message"), i.get("suggestion")) for i in occurrences}
+        if len(distinct) > 1:
+            bullets = "\n".join(f"   - {_at(i)}{_detail(i)}" for i in occurrences)
+            return (
+                f"{len(occurrences)} related findings, each needing its own version "
+                f"of the same fix:\n{bullets}"
+            )
+
+        first = occurrences[0]
+        lines = [str(i["line"]) for i in occurrences if i.get("line") is not None]
+        if len(occurrences) == 1:
+            return f"{_at(first)}{_detail(first)}"
+        where = f"Lines {', '.join(lines)}: " if lines else ""
+        return (
+            f"{where}{_detail(first)}\n"
+            f"   This is one systematic problem occurring {len(occurrences)} times; "
+            "apply the identical fix at every listed location."
+        )
+
+    if len(grouped) == 1:
+        body = f"Fix the following in this chapter.\n{_describe(next(iter(grouped.values())))}"
+    else:
+        items = "\n".join(
+            f"{n}. {_describe(occurrences)}"
+            for n, occurrences in enumerate(grouped.values(), start=1)
+        )
+        body = f"Apply all {len(grouped)} of the following fixes to this chapter:\n{items}"
+
+    return f"{body}\nChange nothing else."
+
+
+def _set_ignored(
+    run_id: str,
+    chapter_id: str,
+    issue_indices: Iterable[int],
+    checkpointer: BaseCheckpointSaver,
+    *,
+    ignored: bool,
+) -> dict[str, Any]:
+    """Flip the ``ignored`` flag on one or more issues in the findings sidecar."""
+    sidecar_path, findings = _read_findings_sidecar(run_id, chapter_id, checkpointer)
+    if sidecar_path is None:
+        return findings
+
+    issues = findings.get("issues", [])
+    indices, error = _select_issues(issues, issue_indices, chapter_id)
+    if error is not None:
+        return error
+
+    for index in indices:
+        issues[index]["ignored"] = ignored
+    sidecar_path.write_text(json.dumps(findings, indent=2), encoding="utf-8")
+    return findings
+
+
+def dismiss_issues(
+    run_id: str,
+    chapter_id: str,
+    issue_indices: Iterable[int],
+    checkpointer: BaseCheckpointSaver,
+) -> dict[str, Any]:
+    """Mark one or more issues as ignored in the findings sidecar."""
+    return _set_ignored(run_id, chapter_id, issue_indices, checkpointer, ignored=True)
+
+
+def restore_issues(
+    run_id: str,
+    chapter_id: str,
+    issue_indices: Iterable[int],
+    checkpointer: BaseCheckpointSaver,
+) -> dict[str, Any]:
+    """Un-ignore one or more issues, bringing them back into the counts.
+
+    The counterpart to dismiss_issues, and load-bearing rather than a nicety:
+    finalize_review now carries dismissals across review passes (keyed on
+    group_key), so without this a mis-click would suppress a finding for the
+    rest of the chapter's life.
+    """
+    return _set_ignored(run_id, chapter_id, issue_indices, checkpointer, ignored=False)
+
+
+def fix_issues(
+    run_id: str,
+    chapter_id: str,
+    issue_indices: Iterable[int],
+    checkpointer: BaseCheckpointSaver,
+) -> dict[str, Any]:
+    """Trigger ONE edit_chapter run addressing an arbitrary set of findings.
+
+    The set may be a single finding, a group of occurrences of one systematic
+    problem, or a queue the user assembled across several unrelated findings.
+    All three fold into one edit → review → gate cycle: a cycle costs an editing
+    call plus every registered check, so paying that per finding is both slow to
+    sit through and wasteful of tokens.
+    """
+    sidecar_path, findings = _read_findings_sidecar(run_id, chapter_id, checkpointer)
+    if sidecar_path is None:
+        return findings
+
+    issues = findings.get("issues", [])
+    indices, error = _select_issues(issues, issue_indices, chapter_id)
+    if error is not None:
+        return error
+
+    instruction = _fix_instruction([issues[i] for i in indices])
+    apply_chapter_command(run_id, chapter_id, "retry", checkpointer, instruction=instruction)
+    return {"status": "triggered", "instruction": instruction, "issue_indices": indices}
+
+
+def dismiss_issue(
+    run_id: str, chapter_id: str, issue_index: int, checkpointer: BaseCheckpointSaver
+) -> dict[str, Any]:
+    """Mark a single issue as ignored in the findings sidecar."""
+    return dismiss_issues(run_id, chapter_id, [issue_index], checkpointer)
+
+
+def fix_single_issue(
+    run_id: str, chapter_id: str, issue_index: int, checkpointer: BaseCheckpointSaver
+) -> dict[str, Any]:
+    """Trigger edit_chapter with a targeted instruction for one issue."""
+    return fix_issues(run_id, chapter_id, [issue_index], checkpointer)
+
+
+ASSET_SUFFIXES = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".pdf"}
+)
+
+
+def _asset_resolver(
+    source_path: str, output_path: str, project_source: str
+) -> Callable[[str], str | None]:
+    """Build a resolver mapping an <image source="..."> to an absolute path.
+
+    A chapter's image references come through pandoc verbatim from the
+    Markdown, so they are relative to wherever that Markdown lived — for a
+    knitr-generated chapter that's the compiled Markdown's directory
+    (``<chapter>_files/figure-html/…``), but a hand-authored path may be
+    relative to the original project instead. Try each, nearest first.
+    """
+    roots = [Path(p).parent for p in (output_path, source_path) if p]
+    if project_source:
+        roots.append(Path(project_source))
+
+    def resolve(source: str) -> str | None:
+        if not source:
+            return None
+        candidate = Path(source)
+        if candidate.is_absolute():
+            return str(candidate) if candidate.is_file() else None
+        for root in roots:
+            found = root / candidate
+            if found.is_file():
+                return str(found.resolve())
+        return None
+
+    return resolve
+
+
+def render_chapter_output(
+    run_id: str, chapter_id: str, checkpointer: BaseCheckpointSaver
+) -> dict[str, Any]:
+    """Render a chapter's .ptx to preview HTML for the workspace render pane.
+
+    Reads the artifact straight off disk rather than from chapter state, so a
+    hand-edit made through PUT .../file shows up immediately without the
+    chapter having to be re-run.
+    """
+    graph = _active_workflow_graph(checkpointer)
+    config = build_checkpoint_config(run_id=run_id)
+    snapshot = graph.get_state(config)
+    if snapshot is None or not snapshot.values:
+        return {"error": f"no checkpoint found for run_id={run_id!r}"}
+
+    chapter = _find_chapter_in_manifest(run_id, chapter_id, checkpointer)
+    if chapter is None:
+        return {"error": f"chapter {chapter_id!r} not found in run {run_id!r}"}
+
+    output_path = chapter.get("output_path", "")
+    if not output_path or not Path(output_path).exists():
+        return {
+            "run_id": run_id,
+            "chapter_id": chapter_id,
+            "path": output_path,
+            "html": "",
+            "warnings": [],
+            "unsupported": [],
+            "error": None,
+            "rendered": False,
+        }
+
+    xml_text = Path(output_path).read_text(encoding="utf-8", errors="replace")
+    result = render_pretext(
+        xml_text,
+        asset_resolver=_asset_resolver(
+            chapter.get("source_path", ""),
+            output_path,
+            snapshot.values.get("project_source", ""),
+        ),
+    )
+    return {
+        "run_id": run_id,
+        "chapter_id": chapter_id,
+        "path": output_path,
+        "html": result.html,
+        "warnings": result.warnings,
+        "unsupported": result.unsupported,
+        "error": result.error,
+        "rendered": True,
     }
 
 

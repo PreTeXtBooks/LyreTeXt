@@ -24,6 +24,10 @@ class TranslationState(TypedDict):
     read_stage_warnings: NotRequired[list[dict[str, Any]]]
     # P4: project-level resource files discovered during read
     project_resources: NotRequired[list[dict[str, Any]]]
+    # LaTeX pipeline: main .tex file and project root, populated by
+    # build_skeleton's process_to_markdown step when the tex pipeline runs.
+    main_file: NotRequired[str]
+    project_root: NotRequired[str]
 
 class TestState(TypedDict):
     source_path: str

@@ -1,12 +1,13 @@
 global_options:
   apply_mode: auto_apply
+  auto_edit: false
   create_backup: false
   execution_mode: direct
+  format_output: true
   llm_model: null
+  max_edit_iterations: 2
+  pandoc_exe: null
+  pandoc_writer: pretext.lua
   pipeline: rmd
   provider: gemini
-node_overrides:
-  translate_chapter:
-    create_backup: true
-    llm_model: null
-    provider: null
+node_overrides: {}

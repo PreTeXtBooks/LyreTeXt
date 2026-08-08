@@ -26,7 +26,27 @@ class GlobalRuntimeOptions(BaseModel):
     provider: Literal["gemini", "anthropic"] = "gemini"
     llm_model: Optional[str] = None  # None means use default from env
     verbosity: Literal["silent", "normal", "debug"] = "normal"
-    pipeline: Literal["rmd", "qmd"] = "rmd"
+    pipeline: Literal["rmd", "qmd", "tex"] = "rmd"
+
+    # Markdown → PreTeXt conversion (deterministic, via pandoc + pretext.lua).
+    # None means auto-discover; see lyretext.convert.pandoc.find_pandoc.
+    pandoc_exe: Optional[str] = None
+    pandoc_writer: str = "pretext.lua"
+    # Extra pandoc CLI args, comma-separated or a JSON list (e.g. for
+    # --lua-filter, -M metadata, etc). None means no extra args.
+    pandoc_extra_args: Optional[str] = None
+
+    # Editing agent. It always runs when the user asks for a fix at the review
+    # gate; auto_edit additionally lets the review loop invoke it *unasked* for
+    # findings from checks marked auto_fixable. Off by default: deciding what
+    # gets rewritten is the point of the human gate, and silently repairing
+    # findings before the user sees them undercuts it.
+    auto_edit: bool = False
+    max_edit_iterations: int = 2
+
+    # Normalise .ptx whitespace on every write, so pandoc's layout and the
+    # editing agent's converge — see lyretext.format.pretext_fmt.
+    format_output: bool = True
 
     model_config = {"use_enum_values": False}
 
@@ -39,6 +59,12 @@ class NodeOverrides(BaseModel):
     provider: Optional[Literal["gemini", "anthropic"]] = None
     llm_model: Optional[str] = None
     verbosity: Optional[Literal["silent", "normal", "debug"]] = None
+    pandoc_exe: Optional[str] = None
+    pandoc_writer: Optional[str] = None
+    pandoc_extra_args: Optional[str] = None
+    auto_edit: Optional[bool] = None
+    max_edit_iterations: Optional[int] = None
+    format_output: Optional[bool] = None
 
     model_config = {"use_enum_values": False, "extra": "forbid"}
 
@@ -152,16 +178,33 @@ class ConfigResolver:
             f"{prefix}LLM_MODEL": "llm_model",
             f"{prefix}VERBOSITY": "verbosity",
             f"{prefix}PIPELINE": "pipeline",
+            f"{prefix}PANDOC_EXE": "pandoc_exe",
+            f"{prefix}PANDOC_WRITER": "pandoc_writer",
+            f"{prefix}PANDOC_EXTRA_ARGS": "pandoc_extra_args",
+            f"{prefix}AUTO_EDIT": "auto_edit",
+            f"{prefix}MAX_EDIT_ITERATIONS": "max_edit_iterations",
+            f"{prefix}FORMAT_OUTPUT": "format_output",
         }
-        
+
+        # Env vars are always strings; these keys need coercing before pydantic
+        # sees them.
+        bool_keys = {"create_backup", "auto_edit", "format_output"}
+        int_keys = {"max_edit_iterations"}
+
         for env_key, config_key in env_mapping.items():
             if env_key in os.environ:
-                value = os.environ[env_key]
-                # Parse boolean
-                if config_key == "create_backup":
+                value: Any = os.environ[env_key]
+                if config_key in bool_keys:
                     value = value.lower() in ("true", "1", "yes")
+                elif config_key in int_keys:
+                    try:
+                        value = int(value)
+                    except ValueError:
+                        raise ValueError(
+                            f"{env_key} must be an integer, got {value!r}"
+                        )
                 config_dict[config_key] = value
-        
+
         return {"global_options": config_dict} if config_dict else {}
 
     @staticmethod
@@ -205,7 +248,9 @@ def resolve_node_opts(
         
     Returns:
         dict with keys: execution_mode, apply_mode, create_backup, provider,
-                        llm_model, verbosity, pipeline
+                        llm_model, verbosity, pipeline, pandoc_exe,
+                        pandoc_writer, auto_edit, max_edit_iterations,
+                        format_output
     """
     if run_config is not None:
         configurable = run_config.get("configurable", {})
@@ -222,6 +267,12 @@ def resolve_node_opts(
         "llm_model": state.get("llm_model"),
         "verbosity": state.get("verbosity", "normal"),
         "pipeline": state.get("pipeline", "rmd"),
+        "pandoc_exe": state.get("pandoc_exe"),
+        "pandoc_writer": state.get("pandoc_writer", "pretext.lua"),
+        "pandoc_extra_args": state.get("pandoc_extra_args"),
+        "auto_edit": state.get("auto_edit", False),
+        "max_edit_iterations": state.get("max_edit_iterations", 2),
+        "format_output": state.get("format_output", True),
     }
 
 

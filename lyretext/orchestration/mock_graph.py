@@ -162,7 +162,7 @@ def build_mock_chapter_graph(checkpointer: BaseCheckpointSaver | None = None):
         {
             "translate_chapter": "mock_translate",
             "review_chapter":    "mock_translate",
-            "read_chapter":      "mock_translate",
+            "edit_chapter":      "mock_translate",
             END: END,
         },
     )

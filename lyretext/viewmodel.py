@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -46,9 +46,33 @@ def load_chapter_findings(output_dir: str, chapter_id: str) -> dict[str, Any] | 
     return _load_findings(output_dir, chapter_id)
 
 
+def _active_issues(findings: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Findings the user has not dismissed."""
+    if findings is None:
+        return []
+    return [i for i in findings.get("issues", []) if not i.get("ignored")]
+
+
+def _has_blocking_issue(findings: dict[str, Any] | None) -> bool:
+    """True when an undismissed error remains — the chapter can't pass silently."""
+    return any(i.get("severity") == "error" for i in _active_issues(findings))
+
+
 def _findings_counts(findings: dict[str, Any] | None) -> dict[str, int]:
     if findings is None:
         return {"error": 0, "warn": 0, "info": 0}
+    # When the sidecar carries its per-issue list, recompute from it (rather
+    # than trusting the stored "counts" block) so issues dismissed after the
+    # sidecar was written (Issue.ignored, set via dismiss_issue) drop out of
+    # the badge counts. Fall back to the stored counts when only that summary
+    # is available (e.g. callers/tests that pass a bare counts dict).
+    if "issues" in findings:
+        active = _active_issues(findings)
+        return {
+            "error": sum(1 for i in active if i.get("severity") == "error"),
+            "warn": sum(1 for i in active if i.get("severity") == "warn"),
+            "info": sum(1 for i in active if i.get("severity") == "info"),
+        }
     counts = findings.get("counts", {})
     return {
         "error": counts.get("error", 0),
@@ -70,8 +94,14 @@ def _chapter_stage_states(
     pending_interrupt: dict[str, Any] | None,
     findings: dict[str, Any] | None,
     at_read_gate: bool = False,
+    stalled: bool = False,
 ) -> dict[str, str]:
-    """Return {read, translate, validate, enhance} stage states for one chapter."""
+    """Return {read, translate, validate, enhance} stage states for one chapter.
+
+    *stalled* means the chapter's thread has a node still queued but no
+    interrupt pending — it stopped part-way through rather than reaching its
+    gate, so nothing downstream may be reported as complete.
+    """
     status = chapter_status.get(chapter_id, "pending")
 
     if status == "skipped":
@@ -85,14 +115,7 @@ def _chapter_stage_states(
 
     ptx_exists = bool(output_path) and Path(output_path).exists()
     findings_exist = findings is not None
-    has_blocking = (
-        findings is not None
-        and any(
-            i.get("severity") == "error" and not i.get("auto_fixed")
-            for i in findings.get("issues", [])
-        )
-    )
-    escalation = pending_interrupt.get("escalation_required", False) if pending_interrupt else False
+    has_blocking = _has_blocking_issue(findings)
     is_dispatch = pending_interrupt and pending_interrupt.get("type") == "chapter_dispatch"
     # By the time chapter_review_gate fires, review_chapter has already run
     # to completion (that's the graph order: translate -> review -> gate) —
@@ -118,11 +141,16 @@ def _chapter_stage_states(
 
     # --- validate ---
     if is_review_gate:
-        validate_state = "failed" if escalation else "needs-review"
+        validate_state = "needs-review"
+    elif stalled:
+        # Stopped part-way (e.g. review_chapter raised): the .ptx exists but
+        # nothing validated it. Must not fall through to the "no findings ⇒
+        # done" branch below, which would show a clean pass that never ran.
+        validate_state = "failed"
     elif not ptx_exists:
         validate_state = "pending"
     elif findings_exist and has_blocking:
-        validate_state = "failed" if escalation else "needs-review"
+        validate_state = "needs-review"
     else:
         # ptx exists and there's no open gate: the chapter has nothing left
         # pending, whether that's because findings were recorded and came
@@ -144,15 +172,19 @@ def _chapter_lifecycle(
     output_path: str,
     findings: dict[str, Any] | None,
     pending_interrupt: dict[str, Any] | None,
+    stalled: bool = False,
 ) -> str:
     """Return a stable lifecycle label for a chapter summary."""
     if pending_interrupt and pending_interrupt.get("type") == "chapter_review":
         return "review_required"
+    # A thread with a node still queued but no interrupt didn't finish — it
+    # died mid-run (an LLM/network failure inside review_chapter, say). Its
+    # .ptx exists but was never reviewed, and calling that "approved" told the
+    # user the chapter had passed when nothing had checked it.
+    if stalled:
+        return "review_required"
     if output_path and Path(output_path).exists():
-        if findings is not None and any(
-            i.get("severity") == "error" and not i.get("auto_fixed")
-            for i in findings.get("issues", [])
-        ):
+        if _has_blocking_issue(findings):
             return "review_required"
         return "approved"
     return "translation_ready"
@@ -182,9 +214,12 @@ _NODE_LABELS: dict[str, str] = {
     "evaluate_read_gate":    "Read gate",
     "recompile_chapters":    "Recompile chapters",
     "chapter_dispatch_gate": "Ready to translate",
+    # read_chapter is no longer in the chapter graph, but pre-pandoc checkpoint
+    # histories still reference it — keep the label so old runs render properly.
     "read_chapter":          "Read chapter",
     "translate_chapter":     "Translate chapter",
     "review_chapter":        "Validate chapter",
+    "edit_chapter":          "Edit chapter",
     "chapter_review_gate":   "Chapter gate",
 }
 
@@ -310,11 +345,10 @@ def _build_jobs_view(
                 if pending_interrupt.get("type") == "chapter_review"
                 else "chapter_dispatch_gate"
             )
-            escalation = pending_interrupt.get("escalation_required", False)
             jobs.append({
                 "node": gate_node,
                 "label": _NODE_LABELS.get(gate_node, gate_node.replace("_", " ").title()),
-                "status": "failed" if escalation else "needs-review",
+                "status": "needs-review",
                 "step": (entries[-1][0] + 1) if entries else 0,
                 "duration": None,
                 "chapter_id": chapter_id,
@@ -328,11 +362,26 @@ def _build_jobs_view(
 # Main view-model builder
 # ---------------------------------------------------------------------------
 
-def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str, Any]:
+def build_view_model(
+    run_id: str,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    executing_chapters: Iterable[str] | None = None,
+    run_executing: bool = False,
+) -> dict[str, Any]:
     """Build the read-model dict for *run_id*.
 
     Returns a dict with keys: run_id, project, chapters, resources, jobs, output, gate.
     Returns ``{"error": "..."}`` if no checkpoint exists for the run.
+
+    *executing_chapters* / *run_executing* describe what is currently mid-flight
+    in this process. A checkpoint snapshot cannot distinguish "this node is
+    running right now" from "this node never finished" — both look like
+    ``next=(node,)`` with no interrupt pending — so the caller has to say which
+    it is, or every chapter would be reported as stalled for the whole time it
+    was legitimately executing. ``run_executing`` covers run-level operations
+    (the read gate, apply_chapter_decision) that drive chapter threads without
+    going through the per-chapter lock.
 
     Each chapter now runs on its own checkpoint thread (see
     orchestration/graph.py's invoke_chapter_graph/resume_chapter_graph), so
@@ -342,6 +391,8 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
     Send-subgraph task states (chapters are no longer Send branches of this
     graph at all).
     """
+    in_flight: set[str] = set(executing_chapters or ())
+
     graph = _active_workflow_graph(checkpointer)
     config = build_checkpoint_config(run_id=run_id)
     snapshot = graph.get_state(config)
@@ -376,6 +427,7 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
     chapter_snapshots: dict[str, Any] = {}
     chapter_configs: dict[str, dict[str, Any]] = {}
     chapter_interrupts: dict[str, dict] = {}
+    chapter_stalled: dict[str, bool] = {}
     for ch in manifest:
         chapter_id = _chapter_id_from_path(ch["output_path"])
         ch_config = build_chapter_checkpoint_config(run_id, chapter_id)
@@ -386,6 +438,17 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
             intrs = _thread_interrupts(ch_snapshot)
             if intrs:
                 chapter_interrupts[chapter_id] = intrs[0]
+            # Nodes still queued but nothing to resume into: the thread stopped
+            # part-way instead of reaching a gate or END. Callers must not read
+            # that as a clean finish — unless the node in question is running
+            # right now, which looks identical in the checkpoint and is the
+            # normal state for most of a chapter's execution.
+            chapter_stalled[chapter_id] = bool(
+                getattr(ch_snapshot, "next", ())
+                and not intrs
+                and not run_executing
+                and chapter_id not in in_flight
+            )
 
     # Build per-chapter view entries
     chapters_view: list[dict[str, Any]] = []
@@ -393,6 +456,7 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
         chapter_id = Path(ch["output_path"]).stem
         findings = _load_findings(output_dir, chapter_id)
         pending_intr = chapter_interrupts.get(chapter_id)
+        stalled = chapter_stalled.get(chapter_id, False)
 
         stages = _chapter_stage_states(
             chapter_id=chapter_id,
@@ -402,6 +466,7 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
             pending_interrupt=pending_intr,
             findings=findings,
             at_read_gate=read_gate_interrupt is not None,
+            stalled=stalled,
         )
 
         # Gate entry
@@ -416,18 +481,14 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
                     "interrupt_id": pending_intr.get("interrupt_id", ""),
                 }
             else:  # chapter_review
-                escalation = pending_intr.get("escalation_required", False)
+                # iteration_count is a revision number, not a retry budget —
+                # a chapter is never "failed" for having been fixed twice.
                 gate = {
                     "stage": "translate",
-                    "message": (
-                        "Escalation required — retries exhausted"
-                        if escalation
-                        else "Needs review"
-                    ),
-                    "failed": escalation,
+                    "message": "Needs review",
+                    "failed": False,
                     "interrupt_id": pending_intr.get("interrupt_id", ""),
                     "iteration_count": pending_intr.get("iteration_count"),
-                    "escalation_required": escalation,
                 }
         elif read_gate_interrupt:
             # chapter_status is only populated once the read gate is approved
@@ -445,7 +506,15 @@ def build_view_model(run_id: str, checkpointer: BaseCheckpointSaver) -> dict[str
             output_path=ch.get("output_path", ""),
             findings=findings,
             pending_interrupt=pending_intr,
+            stalled=stalled,
         )
+        if stalled and gate is None:
+            gate = {
+                "stage": "translate",
+                "message": "Stopped before completing — re-run this chapter",
+                "failed": True,
+                "interrupt_id": "",
+            }
         chapters_view.append({
             "id": chapter_id,
             "title": ch.get("name", chapter_id),

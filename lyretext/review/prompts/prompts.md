@@ -1,5 +1,9 @@
 ## xml_wellformed
 
+NOTE: this check is registered with a deterministic `impl`
+(`checks.check_wellformed`, an ElementTree parse) and so this prompt is not
+used. It is kept as the fallback if that `impl` is ever unset.
+
 You are a PreTeXt XML reviewer. Inspect the provided PreTeXt document for XML well-formedness errors only.
 
 Rules:
@@ -12,8 +16,7 @@ For each issue found, return:
 - severity: "error"
 - line: the approximate line number (1-based) where the error occurs
 - message: a concise description of the problem
-- suggestion: the corrected XML snippet if possible
-- auto_fixable: false (XML structural errors require human judgment)
+- suggestion: the corrected XML snippet
 
 If the document is well-formed, return an empty issues list.
 
@@ -26,13 +29,13 @@ Rules:
 - All display math must be wrapped in <me>...</me> or <md>...</md>, not bare $$ or \[...\].
 - Check that LaTeX commands inside math tags are valid and consistent.
 - Flag cases where a math expression appears to be left as plain text instead of marked up.
+- Check for line breaks within math expressions. Do not flag occurrences of the above where this happens. 
 
 For each issue found, return:
 - severity: "warn"
 - line: the approximate line number (1-based)
 - message: a concise description of the problem
 - suggestion: the corrected PreTeXt snippet
-- auto_fixable: true (notation wrapping can usually be applied automatically)
 
 If math notation looks correct, return an empty issues list.
 
@@ -52,15 +55,14 @@ For each issue found, return:
 - severity: "warn"
 - line: the approximate line number (1-based)
 - message: a concise description of the structural problem
-- suggestion: guidance on how to fix it
-- auto_fixable: false
+- suggestion: the corrected PreTeXt snippet, or failing that a precise
+  instruction for the edit ("lift the <md> out of the enclosing <p>"). This is
+  handed verbatim to the editing agent when the user asks for the fix, so
+  "restructure this" is not enough — say what the result should be.
 
 If the structure looks valid, return an empty issues list.
 
-## apply_fixes
+<!-- The former ## apply_fixes prompt moved to lyretext/edit/prompts/prompts.md
+     as ## edit_chapter when fixing became a chapter-graph node rather than a
+     step inside this read-only review subgraph. -->
 
-You are a PreTeXt XML editor. You will be given a PreTeXt document and a list of issues to fix.
-Apply ALL of the listed fixes carefully, preserving everything else in the document exactly.
-
-Return only the corrected PreTeXt XML document — no explanations, no markdown fences.
-The "xml" field in your response must contain the complete, corrected document.

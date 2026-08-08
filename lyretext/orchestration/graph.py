@@ -240,7 +240,7 @@ def evaluate_read_stage_gate(state: TranslationState) -> dict:
 
 def recompile_chapters(
     state: TranslationState,
-    run_config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict:
     """Re-run the markdown compilation step for the project.
 
@@ -248,7 +248,7 @@ def recompile_chapters(
     Per-file selective compilation is deferred.
     Clears recompile_queue after completion so route_after_read_gate proceeds normally.
     """
-    process_to_markdown(state, run_config)
+    process_to_markdown(state, config)
     return {"recompile_queue": []}
 
 
@@ -544,3 +544,37 @@ def get_run_manifest(
     if snapshot is None or not snapshot.values:
         return None
     return snapshot.values.get("manifest")
+
+
+def get_run_source_context(
+    run_id: str,
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> dict[str, Any]:
+    """Return LaTeX-pipeline dispatch context for a run: main_file,
+    project_root (when the tex pipeline populated them during read), and
+    chapter_ids (every chapter_id in the run's approved manifest, in order).
+
+    Chapters are dispatched onto their own independent checkpoint threads
+    (see invoke_chapter_graph), so this is how each chapter's initial state
+    picks up the project-wide context it needs to run pandoc once and split
+    the monolithic output across all chapters -- see
+    lyretext.translate.agents._translate_chapter_tex.
+
+    Returns {} if the run's thread has no state yet.
+    """
+    workflow_graph = _active_workflow_graph(checkpointer=checkpointer)
+    config = build_checkpoint_config(run_id=run_id)
+    snapshot = workflow_graph.get_state(config)
+    if snapshot is None or not snapshot.values:
+        return {}
+
+    values = snapshot.values
+    manifest = values.get("manifest") or []
+    context: dict[str, Any] = {
+        "chapter_ids": [_chapter_id_from_path(ch["output_path"]) for ch in manifest]
+    }
+    if values.get("main_file"):
+        context["main_file"] = values["main_file"]
+    if values.get("project_root"):
+        context["project_root"] = values["project_root"]
+    return context

@@ -222,9 +222,12 @@ __marimo__/
 /development
 /archive
 main*.py
+/docs
 
 examples/*/output
 examples/*/temp
+examples/intro-statistics/
+examples/my-paper/
 
 # Runtime-generated run artifacts (not source)
 /lyretext_runs.db
@@ -233,8 +236,11 @@ examples/*/temp
 
 # Claude
 /.claude
+/.agents
 output_example.ptx
 
 # Running
 /output
 /temp
+lyretext/cli.py
+tests/test_cli.py

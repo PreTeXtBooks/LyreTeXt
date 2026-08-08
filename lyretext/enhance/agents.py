@@ -10,7 +10,7 @@ from .state import ChapterEnhance
 
 def enhance_chapter(
     state: ChapterEnhance,
-    run_config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Placeholder — enhance stage is not yet implemented."""
     raise NotImplementedError("Enhance stage is coming soon.")

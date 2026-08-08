@@ -6,9 +6,9 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from lyretext.orchestration.graph import invoke_workflow_graph
 
-dir = "examples\\example_rmd_project\\source"
-temp_dir = "examples\\example_rmd_project\\temp"
-output_dir = "examples\\example_rmd_project\\output"
+dir = "examples\\intro-statistics\\source"
+temp_dir = "examples\\intro-statistics\\temp"
+output_dir = "examples\\intro-statistics\\output"
 
 run_id = str(uuid4())
 
@@ -23,5 +23,5 @@ result = invoke_workflow_graph(
 )
 
 print(f"Run ID: {run_id}")
-print(result)
+#print(result)
 

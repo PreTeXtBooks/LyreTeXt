@@ -8,7 +8,7 @@
     "xml.fileAssociations": [
         {
             "pattern": "**/source/**.ptx",
-            "systemId": "c:\\Users\\georg\\.vscode\\extensions\\oscarlevin.pretext-tools-1.1.0\\assets\\schema\\pretext.rng"
+            "systemId": "c:\\Users\\georg\\.vscode\\extensions\\oscarlevin.pretext-tools-1.2.1\\assets\\schema\\pretext.rng"
         }
     ],
     "python.testing.pytestArgs": [
