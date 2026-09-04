@@ -228,6 +228,7 @@ examples/*/output
 examples/*/temp
 examples/intro-statistics/
 examples/my-paper/
+examples/ghana-ad-maths-yr-2
 
 # Runtime-generated run artifacts (not source)
 /lyretext_runs.db
