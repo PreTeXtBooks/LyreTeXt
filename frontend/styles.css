@@ -1,0 +1,579 @@
+/* LyreTeXt UI — IDEMS Design System (presentation only; development/ux2.md is
+   the behavioural source of truth).
+
+   Tokens are three layers so the whole UI re-themes from the top:
+     1. Base scale   — the raw IDEMS ramps (slate / orange / teal), plus one
+                       functional red for genuine errors (the brand palette
+                       deliberately omits red, so it is namespaced and used only
+                       for real failures).
+     2. Semantic     — IDEMS role tokens (surface / text / border / accent / …).
+     3. App aliases  — the token names this prototype's markup already refers to,
+                       re-pointed onto the semantic layer so app.js needs no
+                       colour edits.
+
+   Colour language: slate carries the room; ORANGE draws the eye (active /
+   selected / attention / primary action); TEAL-BLUE is the quiet second voice
+   (steady & done states, in-progress, supporting data).
+
+   DARK MODE is intentionally NOT authored yet. The hook is in place: every
+   component rule reads a token and never hard-codes a colour, so a future dark
+   theme is only a matter of overriding the base ramp / semantic surfaces inside
+   the :root[data-theme="dark"] block near the bottom of this section. */
+
+:root {
+  /* ---- 1. Base scale ---------------------------------------------------- */
+  --slate-0:#ffffff;
+  --slate-50:#f4f6f7;
+  --slate-100:#eef1f2;
+  --slate-150:#e6eaec;
+  --slate-200:#e2e7e9;
+  --slate-250:#dfe4e6;
+  --slate-300:#d2d8db;
+  --slate-400:#a9b3b8;
+  --slate-500:#828f95;
+  --slate-700:#5c686e;
+  --slate-900:#1c2529;
+
+  /* Accent — PreTeXt orange */
+  --orange-500:#f37021;
+  --orange-400:#f89257;
+  --orange-700:#c2560f;   /* deep — text/icon on an orange tint */
+  --orange-200:#f7d3b8;
+  --orange-100:#fef1e8;
+
+  /* Secondary — teal-blue */
+  --teal-600:#37767f;
+  --teal-500:#62a0a6;
+  --teal-300:#8ab8bd;
+  --teal-200:#cfe2e4;
+  --teal-100:#e5eff0;
+
+  /* Functional error only — the one colour outside the brand palette, so real
+     failures never read as an ordinary warning. Used sparingly. */
+  --red-600:#b0413a;
+  --red-500:#cb5a4f;   /* mid dot — legible on both light and dark code surfaces */
+  --red-200:#ecccc6;
+  --red-100:#fbf1ef;
+
+  /* ---- 2. Semantic (IDEMS roles) --------------------------------------- */
+  --text-strong:var(--slate-900);
+  --text-body:var(--slate-900);
+  --text-secondary:var(--slate-700);
+  --text-tertiary:var(--slate-500);
+  --text-accent:var(--orange-500);
+  --text-on-accent:#ffffff;
+
+  --surface-page:var(--slate-250);   /* recessed app canvas */
+  --surface-card:var(--slate-0);     /* raised card / panel */
+  --surface-subtle:var(--slate-50);  /* subtle section fill / hover */
+  --surface-fill:var(--slate-150);   /* control fill / rail / connector */
+  --surface-inset:var(--slate-100);  /* inset well / active nav */
+
+  --border-strong:var(--slate-300);
+  --border-default:var(--slate-200);
+  --border-hairline:var(--slate-100);
+
+  --accent:var(--orange-500);
+  --accent-hover:var(--orange-400);
+  --accent-strong:var(--orange-700);   /* text on orange tint */
+  --accent-tint:var(--orange-100);
+  --accent-tint-border:var(--orange-200);
+
+  --secondary:var(--teal-500);
+  --secondary-strong:var(--teal-600);
+  --secondary-soft:var(--teal-300);
+  --secondary-tint:var(--teal-100);
+  --secondary-tint-border:var(--teal-200);
+
+  --focus-ring:var(--orange-500);
+  --selection-bg:var(--orange-100);
+  --selection-fg:var(--slate-900);
+
+  /* radii */
+  --radius-xs:3px; --radius-sm:5px; --radius-md:8px;
+  --radius-lg:12px; --radius-xl:16px; --radius-pill:999px;
+
+  /* shadows — faint, cool-slate tinted; lift a true surface, never for drama */
+  --shadow-xs:0 1px 2px rgba(28,37,41,.04);
+  --shadow-sm:0 1px 3px rgba(28,37,41,.06), 0 1px 2px rgba(28,37,41,.04);
+  --shadow-md:0 4px 12px rgba(28,37,41,.08);
+  --shadow-lg:0 10px 30px rgba(28,37,41,.10);
+  --shadow-focus:0 0 0 3px rgba(243,112,33,.28);
+
+  /* fonts — Helvetica Neue for everything read; IBM Plex Mono for machine text */
+  --font-sans:'Helvetica Neue',Helvetica,Arial,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;
+
+  /* ---- 3. App aliases (this prototype's existing token names) ----------- */
+  --font-body:var(--font-sans);
+  --font-heading:var(--font-sans);   /* headings are sans now — no serif */
+
+  --bg:var(--surface-page);
+  --surface:var(--surface-card);
+  --sidebar-bg:var(--surface-card);
+  --sidebar-border:var(--border-default);
+  --border:var(--border-default);
+  --divider:var(--border-hairline);
+
+  --text:var(--text-strong);
+  --text-soft:var(--text-secondary);
+  --text-muted:var(--text-secondary);
+  --text-faint:var(--text-tertiary);
+  --text-ghost:var(--slate-400);
+
+  --accent-text:var(--secondary-strong);   /* teal link / ghost-button text */
+  --accent-soft-bg:var(--accent-tint);      /* orange-tint highlight fill */
+  --accent-soft-border:var(--accent-tint-border);
+
+  /* Needs-review / attention / paused / gate — orange */
+  --warn-bg:var(--orange-100);
+  --warn-text:var(--orange-700);
+  --warn-dot:var(--orange-500);
+
+  /* In-progress / running / validating — teal */
+  --info-bg:var(--teal-100);
+  --info-text:var(--teal-600);
+  --info-dot:var(--teal-500);
+
+  /* Done / approved — teal (same family; label text disambiguates) */
+  --ok-bg:var(--teal-100);
+  --ok-text:var(--teal-600);
+  --ok-dot:var(--teal-500);
+
+  /* Error / failed — restrained functional red */
+  --danger-bg:var(--red-100);
+  --danger-text:var(--red-600);
+  --danger-border:var(--red-200);
+  --danger-dot:var(--red-500);
+
+  /* Idle / queued / not-started — slate */
+  --neutral-bg:var(--surface-inset);
+  --neutral-text:var(--text-secondary);
+  --neutral-dot:var(--slate-400);
+}
+
+/* ---- Dark-mode hook (unauthored on purpose) ----------------------------
+   Dark mode is deliberately not authored yet. When it is, it slots in here as a
+   pure token override — no component rule changes, because none hard-codes a
+   colour. Add a rule like:
+
+     :root[data-theme="dark"],
+     :root:not([data-theme="light"]) {          (inside @media (prefers-color-scheme: dark))
+       color-scheme: dark;
+       --surface-page:#141c1e; --surface-card:#1c2628; --text-strong:#eaf1ef;
+       --slate-...: ...;  (re-point the base ramp / semantic surfaces + text)
+     }
+
+   Set color-scheme:dark only together with the colour overrides — on its own it
+   would darken native controls over the light UI. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--font-sans);
+  color: var(--text-body);
+  background: var(--surface-page);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--secondary-strong); text-decoration: none; }
+a:hover { color: var(--teal-600); }
+button { font-family: inherit; }
+::selection { background: var(--selection-bg); color: var(--selection-fg); }
+::placeholder { color: var(--text-ghost); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin .9s linear infinite; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+
+/* ---------------------------------------------------------------- Shell */
+
+.app-shell { display: flex; height: 100vh; overflow: hidden; background: var(--surface-page); }
+
+.sidebar {
+  width: 264px; flex: none;
+  background: var(--surface-card); border-right: 1px solid var(--border-default);
+  display: flex; flex-direction: column; height: 100vh; overflow-y: auto;
+}
+.brand { display: flex; align-items: center; gap: 13px; padding: 20px 20px 18px; }
+/* The mark's own background is near-white, so on the white sidebar it needs a
+   hairline outline to read as a contained brand tile rather than float. */
+.brand img { width: 48px; height: 48px; border-radius: 12px; flex: none; border: 1px solid var(--border-default); background: var(--surface-card); }
+.brand-name { font-family: var(--font-sans); font-weight: 700; font-size: 18px; line-height: 1.1; letter-spacing: -0.01em; color: var(--text-strong); }
+.brand-sub { font-size: 11.5px; color: var(--text-tertiary); margin-top: 3px; font-weight: 500; }
+
+.nav-label { font-size: 11.5px; letter-spacing: 0; font-weight: 600; color: var(--text-ghost); padding: 2px 20px 8px; }
+.nav-label-project { padding-top: 20px; }
+.nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+.nav-item {
+  position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--radius-md); cursor: pointer;
+  font-size: 14px; letter-spacing: -0.003em; color: var(--text-secondary); font-weight: 500;
+  transition: background .15s, color .15s;
+}
+.nav-item:hover { background: var(--surface-inset); }
+.nav-item.active { background: var(--surface-inset); color: var(--text-strong); font-weight: 600; }
+/* Orange bar hangs off the nav's left inner edge to mark the active view. */
+.nav-item.active::before { content: ""; position: absolute; left: -12px; top: 7px; bottom: 7px; width: 3px; border-radius: 0 4px 4px 0; background: var(--accent); }
+.nav-item svg { flex: none; color: var(--text-tertiary); }
+.nav-item.active svg { color: var(--accent); }
+.nav-badge { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.nav-spacer { flex: 1; min-height: 16px; }
+
+/* Sidebar progress meter — inset well, teal (steady/done) fill. */
+.side-card { margin: 0 16px 12px; padding: 13px 15px; background: var(--surface-inset); border-radius: 10px; }
+.side-progress-row { display: flex; justify-content: space-between; align-items: baseline; }
+.side-progress-label { font-size: 12.5px; color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
+.side-progress-val { font-size: 13px; font-weight: 600; color: var(--text-strong); }
+.side-progress-track { height: 6px; border-radius: 4px; background: var(--surface-card); margin-top: 9px; overflow: hidden; }
+.side-progress-fill { height: 100%; background: var(--secondary); border-radius: 4px; transition: width .4s; }
+
+/* Account row — a static, generic placeholder (no auth in this prototype). */
+.side-account { border-top: 1px solid var(--border-default); padding: 12px 16px; display: flex; align-items: center; gap: 11px; }
+.side-avatar { width: 36px; height: 36px; flex: none; border-radius: 50%; background: var(--surface-inset); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; }
+.side-account-meta { line-height: 1.2; min-width: 0; flex: 1; }
+.side-account-name { font-size: 13.5px; font-weight: 600; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-account-sub { font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.side-brand-footer { border-top: 1px solid var(--border-hairline); padding: 14px 20px; display: flex; align-items: center; justify-content: center; }
+.side-brand-footer img { height: 18px; width: auto; opacity: .85; }
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; background: var(--surface-page); }
+.topbar {
+  position: sticky; top: 0; z-index: 5; background: var(--surface-card); border-bottom: 1px solid var(--border-default);
+  padding: 22px 40px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px;
+}
+.page-title { margin: 0; font-family: var(--font-sans); font-weight: 700; font-size: 26px; letter-spacing: -0.015em; color: var(--text-strong); }
+.page-sub { margin: 6px 0 0; font-size: 14.5px; color: var(--text-secondary); }
+.content { padding: 28px 40px 40px; }
+
+/* ---------------------------------------------------------------- Buttons */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 38px; border-radius: var(--radius-md); padding: 0 16px; font-size: 14px; font-weight: 500; line-height: 1;
+  cursor: pointer; border: 1px solid var(--border-strong); background: var(--surface-card); color: var(--text-strong);
+  white-space: nowrap; transition: background .15s, border-color .15s, color .15s;
+}
+.btn:hover { background: var(--surface-subtle); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn:disabled:hover { background: var(--surface-card); }
+.btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); border-color: var(--accent); }
+.btn-primary { background: var(--accent); border-color: transparent; color: var(--text-on-accent); }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled:hover { background: var(--accent); }
+.btn-ghost { background: none; border-color: transparent; color: var(--secondary-strong); }
+.btn-ghost:hover { background: var(--surface-subtle); }
+.btn-danger { color: var(--danger-text); border-color: var(--danger-border); }
+.btn-danger:hover { background: var(--danger-bg); }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 13px; border-radius: var(--radius-md); }
+.btn-block { width: 100%; }
+.btn-icon { padding: 0; width: 32px; }
+.btn:not(.btn-sm).btn-icon { width: 38px; }
+
+/* ---------------------------------------------------------------- Forms */
+
+.field-label { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.field-help { font-size: 13.5px; color: var(--text-tertiary); margin-top: 5px; line-height: 1.5; }
+.input, .select, textarea {
+  width: 100%; padding: 10px 13px; border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  font-size: 14px; font-family: inherit; background: var(--surface-card); color: var(--text-strong);
+  transition: border-color .15s, box-shadow .15s;
+}
+.input:focus, .select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.input.mono, textarea.mono { font-family: var(--font-mono); font-size: 13px; }
+textarea { resize: vertical; }
+.checkbox { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* ---------------------------------------------------------------- Settings cards */
+/* White cards on the grey canvas: a titled header strip, then label/control
+   rows (or the per-node override table) that manage their own edge padding, so
+   the card body carries no padding of its own. */
+.settings-card { background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 20px; }
+.settings-card-head { padding: 18px 24px 16px; border-bottom: 1px solid var(--border-hairline); }
+.settings-card-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: var(--text-strong); }
+.settings-card-sub { font-size: 13.5px; color: var(--text-tertiary); margin-top: 3px; }
+.settings-row { display: grid; grid-template-columns: 280px minmax(0,1fr); gap: 26px; align-items: center; padding: 18px 24px; }
+.settings-row + .settings-row { border-top: 1px solid var(--border-hairline); }
+.settings-control { max-width: 440px; }
+.settings-node-head { display: grid; grid-template-columns: minmax(0,1.2fr) 100px 180px minmax(0,1.2fr); gap: 16px; align-items: center; padding: 12px 24px; background: var(--surface-subtle); border-bottom: 1px solid var(--border-hairline); font-size: 12px; font-weight: 500; color: var(--text-tertiary); }
+.settings-node-row { display: grid; grid-template-columns: minmax(0,1.2fr) 100px 180px minmax(0,1.2fr); gap: 16px; align-items: center; padding: 14px 24px; }
+.settings-node-row + .settings-node-row { border-top: 1px solid var(--border-hairline); }
+
+/* ---------------------------------------------------------------- Cards / surfaces */
+
+.card { background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 22px 24px; }
+.card-sm { padding: 14px 18px; border-radius: var(--radius-lg); }
+
+/* ---------------------------------------------------------------- Pills / tags */
+
+.pill { display: inline-flex; align-items: center; gap: 7px; border-radius: var(--radius-pill); padding: 5px 12px; font-size: 12.5px; font-weight: 600; flex: none; }
+.pill-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.pill-neutral { background: var(--neutral-bg); color: var(--neutral-text); }
+.pill-neutral .pill-dot { background: var(--neutral-dot); }
+.pill-info { background: var(--info-bg); color: var(--info-text); }
+.pill-info .pill-dot { background: var(--info-dot); }
+.pill-warn { background: var(--warn-bg); color: var(--warn-text); }
+.pill-warn .pill-dot { background: var(--warn-dot); }
+.pill-ok { background: var(--ok-bg); color: var(--ok-text); }
+.pill-ok .pill-dot { background: var(--ok-dot); }
+
+/* Manifest type tags — uniform slate chips (the palette carries the room; the
+   type word, not a colour, tells them apart). */
+.tag { display: inline-flex; align-items: center; border-radius: var(--radius-pill); padding: 3px 10px; font-size: 11px; letter-spacing: .04em; font-weight: 600; background: var(--surface-fill); color: var(--text-secondary); }
+.tag-chapter, .tag-frontmatter, .tag-backmatter, .tag-appendix, .tag-asset, .tag-script { background: var(--surface-fill); color: var(--text-secondary); }
+
+/* Manifest edit-mode type select — a neutral leading rule, so changing the type
+   still visibly registers without inventing per-type colours. */
+.select-type-chapter, .select-type-frontmatter, .select-type-backmatter,
+.select-type-appendix, .select-type-asset, .select-type-script { border-left: 4px solid var(--border-strong); }
+
+.sev { flex: none; border-radius: var(--radius-sm); padding: 2px 8px; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.sev-error { background: var(--danger-bg); color: var(--danger-text); }
+.sev-warn { background: var(--warn-bg); color: var(--warn-text); }
+.sev-info { background: var(--info-bg); color: var(--info-text); }
+.sev-line { background: var(--surface-inset); color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; }
+/* The line badge doubles as a jump target into the PreTeXt pane. */
+.sev-jump { border: 1px solid transparent; cursor: pointer; line-height: 1.5; }
+.sev-jump:hover { background: var(--accent-tint); color: var(--accent-strong); border-color: var(--accent-tint-border); }
+
+/* ---------------------------------------------------------------- Tables */
+
+.table-wrap { background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
+.table-head { display: grid; padding: 13px 20px; background: var(--surface-subtle); border-bottom: 1px solid var(--border-default); font-size: 12px; letter-spacing: 0; font-weight: 600; color: var(--text-tertiary); }
+.table-row { display: grid; padding: 14px 20px; border-bottom: 1px solid var(--border-hairline); align-items: center; }
+.table-row:last-child { border-bottom: none; }
+.mono { font-family: var(--font-mono); }
+
+/* ---------------------------------------------------------------- Chapter cards */
+
+.chapter-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 22px; }
+@media (max-width: 980px) { .chapter-grid { grid-template-columns: 1fr; } }
+.chapter-card { background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 22px 24px; display: flex; flex-direction: column; gap: 0; }
+.chapter-card.selected { border-color: var(--accent-tint-border); box-shadow: 0 0 0 1px var(--accent-tint-border), var(--shadow-sm); }
+.chapter-kind { font-size: 11px; letter-spacing: 0; font-weight: 600; color: var(--text-tertiary); }
+.chapter-title { font-family: var(--font-sans); font-weight: 600; font-size: 21px; margin-top: 3px; color: var(--text-strong); }
+.chapter-source { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); margin: 12px 0 18px; word-break: break-all; }
+
+.step-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 0 6px; }
+.step { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 70px; }
+.step-connector { flex: 1; height: 2px; background: var(--surface-fill); margin-top: 18px; }
+.step-circle { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+.step-circle.done { background: var(--secondary-strong); color: #fff; }
+.step-circle.running { background: var(--surface-card); border: 2px solid var(--secondary); color: var(--secondary-strong); }
+.step-circle.needs-review { background: var(--surface-card); border: 2px solid var(--accent); color: var(--accent); }
+.step-circle.failed { background: var(--surface-card); border: 2px solid var(--danger-text); color: var(--danger-text); }
+.step-circle.pending { background: var(--surface-card); border: 1.5px solid var(--border-strong); color: var(--text-ghost); }
+.step-circle.skipped, .step-circle.disabled { background: var(--surface-card); border: 1.5px dashed var(--border-strong); color: var(--text-ghost); }
+.step-label { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
+.step-label.pending, .step-label.disabled { color: var(--text-ghost); }
+
+.chapter-banner { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 12px 16px; border-radius: var(--radius-md); font-size: 14px; font-weight: 600; }
+.chapter-banner .pill-dot { width: 9px; height: 9px; }
+.chapter-footer { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-hairline); flex-wrap: wrap; }
+.chapter-footer-spacer { flex: 1; }
+.remap-inline { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+
+/* ---------------------------------------------------------------- Gate panels */
+
+/* Short attention callout (manifest warnings) — orange tint. */
+.gate-banner { background: var(--accent-tint); border: 1px solid var(--accent-tint-border); border-radius: var(--radius-lg); padding: 14px 18px; display: flex; flex-direction: column; gap: 6px; }
+.gate-banner.escalated { background: var(--danger-bg); border-color: var(--danger-border); }
+/* Workspace review-gate container — a calm white card holding the findings. */
+.gate-panel { padding: 16px 22px; }
+
+.resolve-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin: 16px 0 20px; }
+@media (max-width: 900px) { .resolve-grid { grid-template-columns: 1fr; } }
+.resolve-card { border: 1px solid var(--border-hairline); border-radius: var(--radius-md); padding: 16px; }
+.resolve-card.highlight { border-color: var(--secondary-tint-border); background: var(--surface-subtle); }
+.resolve-title { font-size: 15px; font-weight: 600; margin-bottom: 5px; }
+.resolve-desc { font-size: 13px; color: var(--text-tertiary); line-height: 1.5; min-height: 56px; }
+
+/* ---------------------------------------------------------------- Compare panes */
+
+.compare-row { display: flex; gap: 16px; align-items: stretch; }
+.pane { flex: 1; min-width: 0; background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; display: flex; flex-direction: column; }
+.pane-head { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--border-hairline); }
+.pane-body { padding: 20px 22px; height: 400px; overflow: auto; }
+.pane-body pre { margin: 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; color: var(--text-strong); white-space: pre-wrap; word-break: break-word; }
+/* The gutter must sit flush against the pane edge, so a code view supplies its
+   own vertical padding and the container drops the horizontal padding. */
+.pane-body.code-pane { padding: 12px 0; }
+.pane-body.editing { padding: 0; overflow: hidden; }
+.code-pane > .empty-note { padding: 6px 20px; }
+
+.code-meta { font-size: 11.5px; color: var(--text-ghost); white-space: nowrap; }
+
+/* PreTeXt (XML) syntax highlighting — see highlightXml() in app.js. Three brand
+   hues kept distinct for legibility: teal tags, orange attributes, slate values. */
+.xml-tag { color: var(--secondary-strong); font-weight: 600; }
+.xml-attr { color: var(--accent-strong); }
+.xml-str { color: var(--text-secondary); }
+.xml-comment { color: var(--text-tertiary); font-style: italic; }
+
+/* ------------------------------------------------- Line-numbered code view */
+/* One grid row per source line — rather than a single gutter column beside a
+   <pre> — because soft-wrapped lines have varying heights, and only a per-line
+   row keeps a number opposite the line it belongs to. --ln-w is set inline from
+   the file's digit count (see gutterVar() in app.js). */
+
+.code-view {
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
+  color: var(--text-strong); --ln-w: 2ch;
+  min-width: 100%;
+}
+.code-view.nowrap { width: max-content; }
+.code-line { display: grid; grid-template-columns: calc(var(--ln-w) + 34px) minmax(0, 1fr); }
+.code-line:hover { background: var(--surface-subtle); }
+.code-ln {
+  text-align: right; padding-right: 14px; color: var(--text-ghost);
+  font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none;
+  /* Sticky so the numbers stay readable when a nowrap pane is scrolled right. */
+  position: sticky; left: 0; background: var(--surface-card);
+  border-right: 1px solid var(--border-hairline); margin-right: 14px;
+}
+.code-line:hover .code-ln { color: var(--text-secondary); background: var(--surface-subtle); }
+.code-tx { white-space: pre-wrap; word-break: break-word; padding-right: 20px; }
+.code-view.nowrap .code-tx { white-space: pre; word-break: normal; }
+
+/* Lines carrying a review finding, marked from the same data as the counts.
+   A stripe and a coloured number rather than a tinted row: painting a whole
+   line with a light tint would leave that tint carrying the (future) dark-theme
+   text. The stripe lives on .code-ln, which is sticky, so it survives a sideways
+   scroll — and is drawn over the gutter's own opaque background. */
+.code-line.flagged .code-ln { color: var(--warn-dot); font-weight: 700; box-shadow: inset 3px 0 0 var(--warn-dot); }
+.code-line.flagged-error .code-ln { color: var(--danger-dot); box-shadow: inset 3px 0 0 var(--danger-dot); }
+.code-line.flagged-info .code-ln { color: var(--info-dot); box-shadow: inset 3px 0 0 var(--info-dot); }
+
+/* Flash after "jump to line", so the eye lands on the right row. */
+.code-line.jump-flash, .code-line.jump-flash .code-ln { animation: jumpFlash 1.4s ease-out; }
+@keyframes jumpFlash {
+  0%, 40% { background: var(--accent-tint); }
+  100% { background: transparent; }
+}
+
+/* ------------------------------------------------- Editor */
+/* Two columns, not one element: a textarea cannot carry a gutter. Wrapping is
+   off (wrap="off" on the textarea) so one logical line is always one visual
+   row and the two columns stay in step under a plain scrollTop sync. */
+
+.code-editor { display: grid; grid-template-columns: calc(var(--ln-w) + 34px) minmax(0, 1fr); height: 100%; --ln-w: 2ch; }
+.code-editor-gutter {
+  overflow: hidden; padding: 12px 14px 12px 0; text-align: right;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
+  color: var(--text-ghost); font-variant-numeric: tabular-nums;
+  user-select: none; -webkit-user-select: none;
+  border-right: 1px solid var(--border-hairline); background: var(--surface-card);
+}
+/* The caret's line is marked with a background rather than a colour, so it can
+   combine with a severity colour instead of overriding it. */
+.code-eln.active { color: var(--secondary-strong); font-weight: 600; background: var(--surface-subtle); }
+/* Finding marks carried in from the read-only pane — same stripe, so a line
+   flagged before you opened the editor still looks flagged inside it. These
+   follow .active in source order and win the colour at equal specificity. */
+.code-eln.flagged { color: var(--warn-dot); font-weight: 700; box-shadow: inset 3px 0 0 var(--warn-dot); }
+.code-eln.flagged-error { color: var(--danger-dot); box-shadow: inset 3px 0 0 var(--danger-dot); }
+.code-eln.flagged-info { color: var(--info-dot); box-shadow: inset 3px 0 0 var(--info-dot); }
+.pane-body textarea {
+  width: 100%; height: 100%; border: none; outline: none; resize: none;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
+  padding: 12px 20px 12px 14px; background: transparent; color: var(--text-strong);
+  overflow: auto; tab-size: 2;
+}
+
+/* ------------------------------------------------- Rendered PreTeXt pane */
+/* Styles the HTML produced by lyretext/render/pretext_html.py. Deliberately
+   book-like rather than app-like: this pane answers "does the chapter read
+   correctly?", so it should look like prose, not like the UI around it. */
+
+.render-notes { background: var(--warn-bg); color: var(--warn-text); border-radius: var(--radius-md); padding: 10px 13px; margin-bottom: 16px; font-size: 12.5px; line-height: 1.6; display: flex; flex-direction: column; gap: 4px; }
+.render-error { background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border); border-radius: var(--radius-lg); padding: 16px 18px; }
+
+.ptx-render { font-family: var(--font-sans); font-size: 15px; line-height: 1.72; color: var(--text-body); }
+.ptx-render .ptx-heading { font-family: var(--font-sans); font-weight: 700; color: var(--text-strong); line-height: 1.3; margin: 1.4em 0 .5em; }
+.ptx-render > .ptx-division > .ptx-heading:first-child { margin-top: 0; }
+.ptx-render h1.ptx-heading { font-size: 26px; }
+.ptx-render h2.ptx-heading { font-size: 22px; }
+.ptx-render h3.ptx-heading { font-size: 18.5px; }
+.ptx-render h4.ptx-heading, .ptx-render h5.ptx-heading { font-size: 16px; }
+.ptx-render .ptx-p { margin: 0 0 1em; }
+.ptx-render .ptx-term { font-weight: 700; }
+.ptx-render .ptx-alert { color: var(--danger-text); }
+.ptx-render code { font-family: var(--font-mono); font-size: .87em; background: var(--surface-subtle); border-radius: 4px; padding: 1px 5px; }
+.ptx-render blockquote { margin: 0 0 1em; padding: 2px 0 2px 16px; border-left: 3px solid var(--secondary-tint-border); color: var(--text-secondary); font-style: italic; }
+.ptx-render ul, .ptx-render ol { margin: 0 0 1em; padding-left: 1.6em; }
+.ptx-render li { margin-bottom: .3em; }
+.ptx-render dl { margin: 0 0 1em; }
+.ptx-render dt { font-weight: 700; }
+.ptx-render dd { margin: 0 0 .7em 1.4em; }
+.ptx-render .ptx-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; }
+
+/* Theorem-like blocks: a labelled rule (teal, the supporting second voice),
+   matching how PreTeXt sets example/listing/theorem blocks off. */
+.ptx-render .ptx-block { border-left: 3px solid var(--secondary); background: var(--secondary-tint); border-radius: 0 var(--radius-md) var(--radius-md) 0; padding: 13px 16px 1px; margin: 0 0 1.2em; }
+.ptx-render .ptx-block-head { font-family: var(--font-sans); font-weight: 700; font-size: 14px; letter-spacing: .01em; color: var(--secondary-strong); margin-bottom: .5em; }
+.ptx-render .ptx-block-title { font-weight: 600; font-style: italic; }
+.ptx-render .ptx-block-proof { border-left-color: var(--border-strong); background: transparent; padding-left: 13px; }
+.ptx-render .ptx-block-proof .ptx-block-head { color: var(--text-secondary); font-style: italic; }
+.ptx-render .ptx-block-warning { border-left-color: var(--danger-text); background: var(--danger-bg); }
+.ptx-render .ptx-block-warning .ptx-block-head { color: var(--danger-text); }
+
+.ptx-render .ptx-program, .ptx-render .ptx-pre, .ptx-render .ptx-cd, .ptx-render .ptx-console { position: relative; background: var(--surface-subtle); border: 1px solid var(--border-default); border-radius: var(--radius-md); margin: 0 0 1.2em; }
+.ptx-render .ptx-program pre, .ptx-render pre { margin: 0; padding: 13px 15px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; white-space: pre; color: var(--text-strong); }
+.ptx-render .ptx-program code { background: none; padding: 0; font-size: inherit; }
+.ptx-render .ptx-lang { position: absolute; top: 6px; right: 10px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-ghost); }
+
+.ptx-render .ptx-table-scroll { overflow-x: auto; margin: 0 0 1.2em; }
+.ptx-render .ptx-tabular { border-collapse: collapse; font-size: 13.5px; font-family: var(--font-sans); }
+.ptx-render .ptx-tabular th, .ptx-render .ptx-tabular td { border: 1px solid var(--border-strong); padding: 7px 12px; text-align: left; }
+.ptx-render .ptx-tabular th { background: var(--surface-subtle); font-weight: 700; }
+.ptx-render .ptx-table-caption { caption-side: top; text-align: left; font-weight: 600; font-size: 13.5px; margin-bottom: .4em; }
+
+.ptx-render .ptx-figure { margin: 0 0 1.4em; text-align: center; }
+.ptx-render .ptx-image { max-width: 100%; height: auto; border-radius: 8px; }
+.ptx-render .ptx-caption { font-size: 13px; color: var(--text-secondary); margin-top: .5em; text-align: center; }
+.ptx-render .ptx-image-missing { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; padding: 22px 26px; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--text-tertiary); font-size: 12px; }
+.ptx-render .ptx-image-missing code { font-size: 11px; }
+
+.ptx-render .ptx-fn { font-size: .75em; }
+.ptx-render .ptx-footnotes { margin-top: 2em; padding-top: 1em; border-top: 1px solid var(--border-hairline); font-size: 13px; color: var(--text-secondary); }
+.ptx-render .ptx-footnotes h6 { margin: 0 0 .5em; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--text-ghost); }
+
+/* An unresolved xref or unrecognised element must be conspicuous — silently
+   swallowing it would let a conversion bug read as a clean render. */
+.ptx-render .ptx-xref-dangling { border-bottom: 1px dashed var(--danger-text); color: var(--danger-text); cursor: help; }
+.ptx-render .ptx-unknown { outline: 1px dashed var(--warn-text); outline-offset: 1px; background: var(--warn-bg); border-radius: 3px; }
+.ptx-empty { color: var(--text-tertiary); font-size: 13px; }
+
+/* ---------------------------------------------------------------- Jobs */
+
+.job-card { background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
+.job-head { display: flex; align-items: center; gap: 14px; padding: 18px 22px; cursor: pointer; }
+.job-head:hover { background: var(--surface-subtle); }
+.job-steps { border-top: 1px solid var(--border-hairline); padding: 6px 22px 12px 52px; }
+.job-step-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border-hairline); }
+.job-step-row:last-child { border-bottom: none; }
+.caret { transition: transform .15s; }
+.caret.open { transform: rotate(90deg); }
+
+/* ---------------------------------------------------------------- Misc */
+
+.empty-note { font-size: 13.5px; color: var(--text-tertiary); padding: 4px 0; }
+.hidden { display: none !important; }
+.row { display: flex; align-items: center; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.mt-6 { margin-top: 16px; }
+.toast-root { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
+.toast { background: var(--text-strong); color: #fff; padding: 11px 16px; border-radius: var(--radius-md); font-size: 13.5px; box-shadow: var(--shadow-lg); max-width: 340px; }
+.toast.error { background: var(--danger-text); }
+.toast.success { background: var(--secondary-strong); }
+
+.modal-backdrop { position: fixed; inset: 0; background: rgba(20,28,30,.4); display: flex; align-items: center; justify-content: center; z-index: 40; }
+.modal { background: var(--surface-card); border-radius: var(--radius-xl); padding: 26px 28px; width: 480px; max-width: calc(100vw - 40px); max-height: calc(100vh - 60px); overflow-y: auto; box-shadow: var(--shadow-lg); }
+.modal h3 { margin: 0 0 6px; font-family: var(--font-sans); font-weight: 700; font-size: 20px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+.upload-drop { border: 2px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-subtle); padding: 44px 32px; text-align: center; }
+.upload-drop.dragover { border-color: var(--accent); background: var(--accent-tint); }
+
+.spinner-inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--secondary-strong); }

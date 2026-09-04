@@ -53,7 +53,7 @@ from .service import (
 
 logger = logging.getLogger("lyretext.api")
 
-_UI_DIR = Path(__file__).parent.parent / "development" / "ui-prototype"
+_UI_DIR = Path(__file__).parent.parent / "frontend"
 _checkpointer = None
 
 # Two pools, deliberately. Graph execution (a chapter can take tens of seconds
