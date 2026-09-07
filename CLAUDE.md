@@ -79,7 +79,7 @@ and is provisional — revise it if the real contention shows up elsewhere.
 | Setting | Value |
 |---|---|
 | **Worktree root** | `.claude/worktrees/` (gitignored; `.claude/resume/` is **not** ignored) |
-| **Roadmap document** | not yet written |
+| **Roadmap document** | `ROADMAP.md` |
 | **Decision archive** | none (no pre-migration decision file) |
 | **Granularity experiment** | **inactive** |
 
@@ -117,10 +117,10 @@ summary — the same as any interactive session.
 
 ## Migration status
 
-**Adoption is phased. Phases 0–1 are done; Phase 2 (roadmap/milestones) is deferred, so
-until it lands the task/claim *mechanics* (milestones/waves, issue-as-lock, suspension) are
-not yet in force — outstanding work currently lives as `backlog`-labelled issues, not
-claimable `task`s.** Design intent lives in local, untracked notes (`development/`, `docs/`);
+**Adoption is phased. Phases 0–2 are done — the task/claim *mechanics* (milestones/waves,
+issue-as-lock) are now in force: the active, claimable set is Wave 1 (`W1-UI`, `W1-PIPE`),
+and everything in Wave 2 is recorded backlog until Wave 1 closes (see `ROADMAP.md`). Phase 3
+remains deferred.** Design intent lives in local, untracked notes (`development/`, `docs/`);
 treat those as private working material, not shared state. Do not silently work around this
 list — if a task needs something on it, that need is the reason to do the setup item.
 
@@ -136,11 +136,12 @@ list — if a task needs something on it, that need is the reason to do the setu
 - [x] Outstanding TODOs captured as `backlog` issues #13–#21 (from `frontend/ISSUES.md`,
       now retired).
 
-**Phase 2 — roadmap + milestones (deferred, not started)**
-- [ ] Write the wave roadmap and name it in the bindings table above.
-- [ ] Create the `W1-<Stream>` milestones for the streams live in wave 1.
-- [ ] Convert the `backlog` issues (#13–#21) into claimable `task`s with `W<n>-<Stream>`
-      milestones.
+**Phase 2 — roadmap + milestones (done)**
+- [x] Roadmap written (`ROADMAP.md`) and named in the bindings table above.
+- [x] Milestones created: `W1-UI`, `W1-PIPE` (active) and `W2-PIPE`, `W2-ORCH`, `W2-CORE`
+      (backlog).
+- [x] Backlog issues #13–#21, #24–#25 converted to claimable `task`s on their milestones
+      (the `backlog` label is now unused).
 
 **Phase 3 — deferred until work is genuinely parallel**
 - [ ] Worktrees, task-suspension mechanics, and the instrumentation/granularity experiment
