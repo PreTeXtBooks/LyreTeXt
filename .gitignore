@@ -236,12 +236,14 @@ examples/ghana-ad-maths-yr-2
 /lyretext_runs.db-wal
 
 # Claude
-/.claude
+# NB: do NOT ignore .claude/ wholesale — .claude/resume/ MUST be committed
+#     (collab-protocol suspension notes travel with the tree state they describe).
+.claude/settings.local.json
+.claude/skills/
+.claude/worktrees/
 /.agents
 output_example.ptx
 
 # Running
 /output
 /temp
-lyretext/cli.py
-tests/test_cli.py
