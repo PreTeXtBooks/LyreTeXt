@@ -31,7 +31,7 @@ from lyretext.service import (
     reopen_chapter_for_action,
     write_chapter_file_and_trigger,
 )
-from lyretext.review.structure import Issue, ReviewReport
+from lyretext.review.structure import Issue, IssueDraft, ReviewReport
 from lyretext.review.checks import get_registry
 from lyretext.enhance.graph import build_enhance_graph
 
@@ -121,7 +121,7 @@ class TestChapterStageStates:
         gate is a validate-stage concern, not unfinished translate work."""
         ptx = tmp_path / "ch1.ptx"
         ptx.write_text("<chapter/>")
-        intr = {"type": "chapter_review", "escalation_required": False}
+        intr = {"type": "chapter_review"}
         result = self._call(output_path=str(ptx), pending_interrupt=intr)
         assert result["translate"] == "done"
         assert result["validate"] == "needs-review"
@@ -134,17 +134,32 @@ class TestChapterStageStates:
         the mock pipeline, which doesn't write one)."""
         ptx = tmp_path / "ch1.ptx"
         ptx.write_text("<chapter/>")
-        intr = {"type": "chapter_review", "escalation_required": False}
+        intr = {"type": "chapter_review"}
         result = self._call(output_path=str(ptx), pending_interrupt=intr, findings=None)
         assert result["validate"] == "needs-review"
 
-    def test_escalation_required(self, tmp_path):
+    def test_repeated_revisions_are_not_a_failure(self, tmp_path):
+        """A chapter fixed twice is being worked on, not failing.
+
+        The gate used to escalate at iteration_count >= 2, back when a retry
+        meant the automatic loop giving up. Now that every pass through the gate
+        is a human asking for something, that painted the card red on the user's
+        second fix.
+        """
         ptx = tmp_path / "ch1.ptx"
         ptx.write_text("<chapter/>")
-        findings = {"issues": [{"severity": "error", "auto_fixed": False}]}
-        intr = {"type": "chapter_review", "escalation_required": True}
+        findings = {"issues": [{"severity": "error"}]}
+        intr = {"type": "chapter_review", "iteration_count": 4}
         result = self._call(output_path=str(ptx), pending_interrupt=intr, findings=findings)
-        assert result["validate"] == "failed"
+        assert result["validate"] == "needs-review"
+
+    def test_dismissed_error_does_not_block(self, tmp_path):
+        """Dismissing a finding means the user has decided it is not a problem."""
+        ptx = tmp_path / "ch1.ptx"
+        ptx.write_text("<chapter/>")
+        findings = {"issues": [{"severity": "error", "ignored": True}]}
+        result = self._call(output_path=str(ptx), pending_interrupt=None, findings=findings)
+        assert result["validate"] == "done"
 
     def test_findings_passing(self, tmp_path):
         ptx = tmp_path / "ch1.ptx"
@@ -153,12 +168,12 @@ class TestChapterStageStates:
         sidecar_dir = tmp_path / ".lyretext"
         sidecar_dir.mkdir()
         sidecar = sidecar_dir / "ch1.findings.json"
-        sidecar.write_text(json.dumps({"issues": [{"severity": "warn", "auto_fixed": False}]}))
+        sidecar.write_text(json.dumps({"issues": [{"severity": "warn"}]}))
         result = self._call(
             chapter_id="ch1",
             output_path=str(ptx),
             output_dir=str(tmp_path),
-            findings={"issues": [{"severity": "warn", "auto_fixed": False}]},
+            findings={"issues": [{"severity": "warn"}]},
         )
         assert result["validate"] == "done"
 
@@ -172,25 +187,30 @@ class TestIssueContract:
         issue = Issue(check_id="xml_wellformed", severity="error", message="Unclosed tag")
         assert issue.severity == "error"
         assert issue.auto_fixable is False
-        assert issue.auto_fixed is False
+        assert issue.ignored is False
+        assert issue.group_key is None  # stamped by finalize_review
         assert issue.block_id is None  # future block-level field reserved
 
     def test_review_report_empty(self):
         report = ReviewReport()
         assert report.issues == []
 
-    def test_review_report_with_issues(self):
+    def test_review_report_is_the_llm_facing_schema(self):
+        """A check-agent reports only what it can judge from the document.
+
+        check_id and auto_fixable are properties of the CheckSpec, so asking the
+        LLM for them (as three prompt files used to) made a per-check constant
+        look like a per-finding judgement.
+        """
+        schema_fields = set(ReviewReport.model_json_schema()["$defs"]["IssueDraft"]["properties"])
+        assert schema_fields == {"severity", "line", "end_line", "message", "suggestion"}
+
+    def test_review_report_accepts_drafts(self):
         report = ReviewReport(issues=[
-            Issue(check_id="math_notation", severity="warn", message="Bare $ found", auto_fixable=True),
+            IssueDraft(severity="warn", message="Bare $ found", suggestion="wrap in <m>"),
         ])
         assert len(report.issues) == 1
-        assert report.issues[0].auto_fixable is True
-
-    def test_issue_model_copy_auto_fixed(self):
-        issue = Issue(check_id="math_notation", severity="warn", message="Bare $", auto_fixable=True)
-        fixed = issue.model_copy(update={"auto_fixed": True})
-        assert fixed.auto_fixed is True
-        assert issue.auto_fixed is False  # original unchanged
+        assert report.issues[0].suggestion == "wrap in <m>"
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +232,18 @@ class TestCheckRegistry:
         spec = get_registry().get("xml_wellformed")
         assert spec is not None
         assert spec.default_severity == "error"
-        assert spec.auto_fixable is False
+        # Now that the check is a real parse rather than an LLM guess, it
+        # reports an exact line — enough for the editing agent to act on.
+        assert spec.auto_fixable is True
+
+    def test_wellformed_check_is_deterministic(self):
+        """xml_wellformed must run locally, never via the LLM."""
+        spec = get_registry().get("xml_wellformed")
+        assert spec.impl is not None
+
+    def test_llm_checks_have_no_impl(self):
+        for check_id in ("math_notation", "pretext_structure"):
+            assert get_registry().get(check_id).impl is None
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +347,7 @@ class TestBuildViewModel:
         ptx.write_text("<chapter/>")
 
         # The interrupt now lives on ch1's own chapter thread, not the run thread.
-        intr = _make_interrupt("intr-1", "chapter_review", "ch1", {"escalation_required": False})
+        intr = _make_interrupt("intr-1", "chapter_review", "ch1", {})
         snap = _make_snapshot(
             {
                 "project_source": str(tmp_path),
@@ -460,7 +491,7 @@ class TestBuildViewModel:
         })
         graph = self._make_graph_mock(snap)
 
-        intr = _make_interrupt("intr-1", "chapter_review", "ch1", {"escalation_required": True})
+        intr = _make_interrupt("intr-1", "chapter_review", "ch1", {"iteration_count": 3})
         ch1_snap = MagicMock()
         ch1_snap.values = {"chapter_id": "ch1"}
         ch1_snap.interrupts = [intr]
@@ -483,7 +514,8 @@ class TestBuildViewModel:
             result = build_view_model("run-abc", cp)
 
         by_id = {c["id"]: c for c in result["chapters"]}
-        assert by_id["ch1"]["gate"]["failed"] is True
+        assert by_id["ch1"]["gate"]["stage"] == "translate"
+        assert by_id["ch1"]["gate"]["iteration_count"] == 3
         assert by_id["ch2"]["gate"] is None
 
 
@@ -794,6 +826,77 @@ class TestWriteChapterFileAndTrigger:
         mock_apply.assert_not_called()
         assert result["status"] == "written"
         assert result["triggered"] is None
+
+    def test_trigger_false_writes_and_defers_the_command(self, tmp_path):
+        """The HTTP layer writes first and runs the command in the background.
+
+        The file must be on disk before this returns — the API answers the
+        client at that point — while the recompile/revalidate is only named,
+        not run (see api.write_chapter_file, which spawns it).
+        """
+        out = tmp_path / "ch1.ptx"
+        chapter = {"source_path": str(tmp_path / "ch1.rmd"), "output_path": str(out)}
+
+        at_gate_snapshot = MagicMock()
+        at_gate_snapshot.interrupts = [MagicMock()]
+
+        with (
+            patch("lyretext.service._find_chapter_in_manifest", return_value=chapter),
+            patch("lyretext.service.get_chapter_snapshot", return_value=at_gate_snapshot),
+            patch("lyretext.service.apply_chapter_command") as mock_apply,
+        ):
+            from lyretext.orchestration.checkpointing import build_checkpointer
+            cp = build_checkpointer("memory")
+            result = write_chapter_file_and_trigger(
+                "run-1", "ch1", "output", "<chapter/>", cp, trigger=False
+            )
+
+        assert out.read_text(encoding="utf-8") == "<chapter/>"
+        mock_apply.assert_not_called()
+        assert result["status"] == "written"
+        assert result["pending_action"] == "revalidate"
+        assert result["triggered"] is None
+
+    def test_trigger_false_on_source_defers_recompile(self, tmp_path):
+        src = tmp_path / "ch1.rmd"
+        chapter = {"source_path": str(src), "output_path": str(tmp_path / "ch1.ptx")}
+
+        at_gate_snapshot = MagicMock()
+        at_gate_snapshot.interrupts = [MagicMock()]
+
+        with (
+            patch("lyretext.service._find_chapter_in_manifest", return_value=chapter),
+            patch("lyretext.service.get_chapter_snapshot", return_value=at_gate_snapshot),
+            patch("lyretext.service.apply_chapter_command") as mock_apply,
+        ):
+            from lyretext.orchestration.checkpointing import build_checkpointer
+            cp = build_checkpointer("memory")
+            result = write_chapter_file_and_trigger(
+                "run-1", "ch1", "source", "# edited", cp, trigger=False
+            )
+
+        assert src.read_text(encoding="utf-8") == "# edited"
+        mock_apply.assert_not_called()
+        assert result["pending_action"] == "recompile_source"
+
+    def test_trigger_false_undispatched_has_no_pending_action(self, tmp_path):
+        src = tmp_path / "ch1.rmd"
+        chapter = {"source_path": str(src), "output_path": str(tmp_path / "ch1.ptx")}
+
+        with (
+            patch("lyretext.service._find_chapter_in_manifest", return_value=chapter),
+            patch("lyretext.service.get_chapter_snapshot", return_value=None),
+            patch("lyretext.service.apply_chapter_command") as mock_apply,
+        ):
+            from lyretext.orchestration.checkpointing import build_checkpointer
+            cp = build_checkpointer("memory")
+            result = write_chapter_file_and_trigger(
+                "run-1", "ch1", "source", "# edited", cp, trigger=False
+            )
+
+        assert src.read_text(encoding="utf-8") == "# edited"
+        mock_apply.assert_not_called()
+        assert result["pending_action"] is None
 
     def test_unknown_chapter_errors(self, tmp_path):
         with patch("lyretext.service._find_chapter_in_manifest", return_value=None):
