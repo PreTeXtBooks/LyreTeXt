@@ -27,9 +27,10 @@ edit surface driven from a web frontend.
 system of record. LangGraph is the **topology** of each stage; the durable orchestration
 layer above it (`orchestration/` plus `service.py`/`viewmodel.py`) is what owns run state,
 checkpointing, and the HITL gates. When reasoning about "where does progress live," the
-answer is the orchestration fabric, not a graph's checkpoint. See the design effort in
-`development/` and `docs/architecture/` for the direction this is heading (generalising the
-checkpointing/HITL machinery into a domain-neutral durable workflow fabric).
+answer is the orchestration fabric, not a graph's checkpoint. The direction this is heading —
+generalising the checkpointing/HITL machinery into a domain-neutral durable workflow fabric —
+is worked out in local design notes under `development/` and `docs/`, which are **not tracked
+in the repo** (see the repository-map note); treat them as private working material.
 
 **Companion repo:** none.
 
@@ -49,12 +50,12 @@ same hub file concurrently; new files essentially never conflict.
 | `lyretext/cli.py` | CLI entrypoint. |
 | `lyretext/orchestration/` | Orchestration fabric: `graph.py` **hub**, `state.py` **hub**, `checkpointing.py`, `validation.py`, `mock_graph.py`. |
 | `lyretext/pipeline/` | Input-format pipelines: `tex.py`, `rmd.py`, `qmd.py`. |
-| `lyretext/read/` `convert/` `translate/` `enhance/` `format/` `render/` `review/` `edit/` | Per-stage agent packages (each `agents.py` / `graph.py` / `state.py` / `structure.py` / `prompts/`). Stage-local, not hubs. |
+| `lyretext/read/` `convert/` `translate/` `enhance/` `format/` `render/` `review/` `edit/` | Per-stage agent/tool packages; **structure varies by stage** — agentic stages (`read`, `translate`, `enhance`, `review`) carry `agents.py`/`graph.py`/`state.py`/`structure.py`/`prompts/`, while others are plain modules (`convert/`: `pandoc.py`, `split.py`; `format/`: `pretext_fmt.py`, `repair.py`; `render/`: `pretext_html.py`; `edit/`: `agents.py` + `prompts/`). Stage-local, not hubs. |
 | `lyretext/prompts/`, `lyretext/utils/` | Shared prompt(s) and utilities (`filesystem`, `prompts`, `text`). |
 | `frontend/` | Web UI: `index.html`, `app.js`, `api-client.js` **hub**, `styles.css`, `assets/`. |
 | `tests/` | Test suite. |
-| `docs/` | `architecture/`, `experiments/` — durable design + experiment writeups. |
-| `development/` | Working design notes (`CHECKPOINTING.md`, `multi_agent_design.md`, `orchestration.md`, `ux*.md`, `per-branch-progress.md`, `issue-drafts/`, UI mocks). Scratch/history, not authoritative. |
+| `docs/` | **Local, not tracked** (gitignored). Design + experiment writeups (`architecture/`, `experiments/`), kept private for now — not shared state. |
+| `development/` | **Local, not tracked** (gitignored). Working design notes, issue drafts, and UI mocks — scratch, private, not authoritative. |
 | `examples/`, `demo/`, `archive/` | Example projects, demo assets, archived material. |
 | `config.yml` | **hub** — runtime config. |
 | `requirements.txt` | **hub** — dependencies. |
@@ -116,31 +117,30 @@ summary — the same as any interactive session.
 
 ## Migration status
 
-**Adoption is phased and partly complete. Until the items below are done, Part 2's task and
-decision *mechanics* (milestones/waves, issue-as-lock, suspension) are aspirational, and the
-existing working notes in `development/` remain the authoritative record of intent.** Do not
-silently work around this list — if a task needs something on it, that need is the reason to
-do the setup item.
+**Adoption is phased. Phases 0–1 are done; Phase 2 (roadmap/milestones) is deferred, so
+until it lands the task/claim *mechanics* (milestones/waves, issue-as-lock, suspension) are
+not yet in force — outstanding work currently lives as `backlog`-labelled issues, not
+claimable `task`s.** Design intent lives in local, untracked notes (`development/`, `docs/`);
+treat those as private working material, not shared state. Do not silently work around this
+list — if a task needs something on it, that need is the reason to do the setup item.
 
 **Done**
 - [x] Part 1 written; Part 2 embedded verbatim.
 - [x] Worktree root gitignored; `.claude/resume/` kept tracked.
+- [x] The 10 protocol labels created (plus a `backlog` label for pre-Phase-2 items).
+- [x] Standing decisions filed: #11 `[ARCH]` workflow-fabric ↔ LangGraph; #12 `[DESIGN]`
+      human decides what gets fixed (open — `[DESIGN]` is human-closed).
+- [x] Phase 0 — branch consolidation: orchestration (#10) and frontend/CLI/tests + adoption
+      (#22) merged to `main`; stale `dev-*` / `refactor` / `upgrades` / `ui-prototype`
+      branches pruned.
+- [x] Outstanding TODOs captured as `backlog` issues #13–#21 (from `frontend/ISSUES.md`,
+      now retired).
 
-**Phase 1 — structural (in progress)**
-- [ ] Create the 10 labels (ADOPTING.md step 3).
-- [ ] File the two standing design decisions already recorded in project memory as issues:
-      the HITL per-branch-progress fork (`[ARCH]`, see `development/per-branch-progress.md`)
-      and "human decides what gets fixed" (`[DESIGN]`).
-
-**Phase 0 — branch consolidation (prerequisite, tracked separately)**
-- [ ] Land the open orchestration work and the frontend/CLI work into `main` via reviewed
-      PRs; prune the stale `refactor` / `upgrades` / `ui-prototype` branches.
-
-**Phase 2 — roadmap + milestones (not started)**
+**Phase 2 — roadmap + milestones (deferred, not started)**
 - [ ] Write the wave roadmap and name it in the bindings table above.
 - [ ] Create the `W1-<Stream>` milestones for the streams live in wave 1.
-- [ ] Migrate open TODOs (`frontend/ISSUES.md`, `development/*`) into task issues; the
-      committed `ISSUES.md` scratch list is retired once its contents become issues.
+- [ ] Convert the `backlog` issues (#13–#21) into claimable `task`s with `W<n>-<Stream>`
+      milestones.
 
 **Phase 3 — deferred until work is genuinely parallel**
 - [ ] Worktrees, task-suspension mechanics, and the instrumentation/granularity experiment
