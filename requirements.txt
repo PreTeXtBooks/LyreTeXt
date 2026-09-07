@@ -1,4 +1,12 @@
 langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=1.0.0
 langchain>=0.2.0
 langchain-google-genai>=1.0.7
+langchain-anthropic>=0.2.0
 python-dotenv>=1.0.1
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# Dev / test
+pytest>=7.4.0

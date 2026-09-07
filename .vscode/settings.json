@@ -1,0 +1,19 @@
+{
+    "cSpell.languageSettings": [
+        {
+            "languageId": "pretext",
+            "ignoreRegExpList": []
+        }
+    ],
+    "xml.fileAssociations": [
+        {
+            "pattern": "**/source/**.ptx",
+            "systemId": "c:\\Users\\georg\\.vscode\\extensions\\oscarlevin.pretext-tools-1.3.0\\assets\\schema\\pretext.rng"
+        }
+    ],
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}

@@ -1,32 +1,39 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, TypedDict
-
-
-def _last_value(a, b):
-    """Reducer that keeps the last value. Used for resolved_config written
-    identically by every parallel chapter node."""
-    return b
+from typing import Any, NotRequired, TypedDict
 
 
 class ChapterManifest(TypedDict):
     type: str
     name: str
     source_path: str
+    output_path: str
 
 class TranslationState(TypedDict):
     project_source: str
     temp_dir: str
     output_dir: str
     manifest: list[ChapterManifest]
-    # Annotated so that parallel chapter nodes can all write the same value
-    # without triggering InvalidUpdateError.
-    resolved_config: Annotated[Any, _last_value]
+    transition_policy: NotRequired[dict[str, Any]]
+    human_signoffs: NotRequired[dict[str, bool]]
+    validation_summary: NotRequired[dict[str, Any]]
+    stage_gate_decision: NotRequired[dict[str, Any]]
+    chapter_status: NotRequired[dict[str, str]]
+    recompile_queue: NotRequired[list[str]]
+    project_type: NotRequired[str]
+    read_stage_warnings: NotRequired[list[dict[str, Any]]]
+    # P4: project-level resource files discovered during read
+    project_resources: NotRequired[list[dict[str, Any]]]
+    # LaTeX pipeline: main .tex file and project root, populated by
+    # build_skeleton's process_to_markdown step when the tex pipeline runs.
+    main_file: NotRequired[str]
+    project_root: NotRequired[str]
 
 class TestState(TypedDict):
     source_path: str
     chapter_structure: list[dict[str, Any]] | Any
     pretext_output: str
+    run_id: str
 
 
 # Domain-local state types — owned by their respective modules.

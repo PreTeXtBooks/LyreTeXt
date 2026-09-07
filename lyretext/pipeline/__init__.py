@@ -105,9 +105,11 @@ def _register_builtin_pipelines():
     """Register all built-in pipelines."""
     from .rmd import RmdPipeline
     from .qmd import QmdPipeline
-    
+    from .tex import TexPipeline
+
     PipelineRegistry.register(RmdPipeline())
     PipelineRegistry.register(QmdPipeline())
+    PipelineRegistry.register(TexPipeline())
 
 
 # Register on module import
