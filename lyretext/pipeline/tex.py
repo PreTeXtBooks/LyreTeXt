@@ -5,8 +5,9 @@ Unlike the Rmd pipeline (knitr -> .md -> pandoc -> .ptx), LaTeX projects go
 straight through pandoc with the pretext.lua custom writer -- no intermediate
 markdown stage. pandoc resolves \\input/\\include natively via cwd, converting
 the whole project in one invocation. The manifest, however, is still
-per-chapter, derived here from \\include directives in the main .tex file so
-downstream stages (review, editing, per-chapter UI) keep working per-chapter.
+per-chapter, derived here from top-level \\input/\\include directives in the
+main .tex file's body so downstream stages (review, editing, per-chapter UI)
+keep working per-chapter.
 The actual pandoc invocation and splitting of the monolithic output into
 per-chapter fragments happens later, in translate_chapter / split.py.
 """
@@ -19,10 +20,14 @@ from typing import Any, Optional, Dict
 
 from . import PipelineInterface
 
-# Matches \include{name} but not a commented-out line (a % immediately
-# preceding \include, ignoring nothing in between -- callers are expected to
-# have already filtered out fully-commented lines; see _iter_active_includes).
-_INCLUDE_RE = re.compile(r'(?<!%)\\include\{([^}]+)\}')
+# Matches \input{name} and \include{name}, but not one immediately preceded by
+# a '%' (a toggled-off directive). Callers additionally strip fully-commented
+# and inline-commented text before matching; see _iter_active_inputs. Only the
+# brace form is matched -- bare TeX \input file (no braces) is out of scope for
+# this deterministic layer.
+_INPUT_INCLUDE_RE = re.compile(r'(?<!%)\\(?:input|include)\{([^}]+)\}')
+_BEGIN_DOCUMENT_RE = re.compile(r'\\begin\{document\}')
+_END_DOCUMENT_RE = re.compile(r'\\end\{document\}')
 _DOCUMENTCLASS_RE = re.compile(r'\\documentclass(?:\[[^\]]*\])?\{[^}]+\}')
 _BIBLIOGRAPHY_RE = re.compile(r'\\bibliography\{([^}]+)\}')
 _ADDBIBRESOURCE_RE = re.compile(r'\\addbibresource\{([^}]+)\}')
@@ -40,26 +45,55 @@ def _find_main_tex_file(project_path: Path) -> Optional[Path]:
     return None
 
 
-def _iter_active_includes(text: str) -> list[str]:
-    """Parse \\include{name} directives, skipping commented-out lines.
+def _document_body(text: str) -> str:
+    """Return the document body -- the slice between \\begin{document} and
+    \\end{document}.
 
-    A line is considered "commented out" if a '%' appears before the
-    \\include on that line (the user toggled it off).
+    Restricting to the body ensures preamble directives (e.g. a
+    \\input{macros} or a package load) are never mistaken for chapters. If
+    \\begin{document} is absent (a malformed main file), fall back to the full
+    text rather than silently dropping all chapters.
     """
-    includes: list[str] = []
-    for line in text.splitlines():
+    begin = _BEGIN_DOCUMENT_RE.search(text)
+    if begin is None:
+        return text
+    body = text[begin.end():]
+    end = _END_DOCUMENT_RE.search(body)
+    if end is not None:
+        body = body[:end.start()]
+    return body
+
+
+def _iter_active_inputs(text: str) -> list[str]:
+    """Collect top-level \\input{name} and \\include{name} directives in the
+    document body, in source order, skipping commented-out ones.
+
+    Both directives are treated the same for chapter detection: pandoc resolves
+    each natively during conversion, so each top-level one corresponds to one
+    top-level structural element in pandoc's output. Only the body is scanned
+    (see _document_body), and a directive is skipped if a '%' precedes it on its
+    line (fully-commented lines are dropped; inline comments are truncated).
+    Nested directives inside the included files are not followed -- they are
+    chapter *content* that pandoc inlines.
+    """
+    names: list[str] = []
+    for line in _document_body(text).splitlines():
         stripped = line.lstrip()
         if stripped.startswith("%"):
             continue
         percent_idx = line.find("%")
         search_text = line if percent_idx == -1 else line[:percent_idx]
-        for match in _INCLUDE_RE.finditer(search_text):
-            includes.append(match.group(1))
-    return includes
+        for match in _INPUT_INCLUDE_RE.finditer(search_text):
+            names.append(match.group(1).strip())
+    return names
 
 
 def _resolve_include_path(project_path: Path, name: str) -> Path:
-    """Resolve an \\include{name} target to an actual .tex file on disk."""
+    """Resolve an \\input{name}/\\include{name} target to a .tex file on disk.
+
+    Handles subdirectory targets (name may contain '/') and the implicit .tex
+    extension.
+    """
     candidate = project_path / name
     if candidate.suffix != ".tex":
         candidate_with_ext = project_path / f"{name}.tex"
@@ -120,7 +154,7 @@ class TexPipeline(PipelineInterface):
             output_dir.mkdir(parents=True)
 
         main_text = main_path.read_text(encoding="utf-8", errors="replace")
-        include_names = _iter_active_includes(main_text)
+        include_names = _iter_active_inputs(main_text)
 
         markdown_files: dict[str, str] = {}
         errors: list[str] = []
@@ -163,7 +197,7 @@ class TexPipeline(PipelineInterface):
     ) -> Dict[str, Any]:
         """
         Auto-detect LaTeX project configuration: main file, bibliography
-        files, and chapters (from \\include directives).
+        files, and chapters (from body-level \\input/\\include directives).
 
         Returns:
             dict with "main_file", "bib_files", "chapters"
@@ -189,7 +223,7 @@ class TexPipeline(PipelineInterface):
             bib_files.append(match.group(1).strip())
         config["bib_files"] = bib_files
 
-        config["chapters"] = _iter_active_includes(text)
+        config["chapters"] = _iter_active_inputs(text)
 
         return config
 

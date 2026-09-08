@@ -88,6 +88,126 @@ def test_skips_commented_includes(tmp_project):
     assert "ch1" in result["markdown_files"]
 
 
+def test_parses_inputs(tmp_project):
+    """A project structured with \\input (not \\include) yields one chapter per
+    top-level \\input, in source order."""
+    main = tmp_project / "book.tex"
+    main.write_text(
+        "\\documentclass{book}\n"
+        "\\begin{document}\n"
+        "\\input{ch1}\n"
+        "\\input{ch2}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tmp_project / "ch1.tex").write_text("chapter one", encoding="utf-8")
+    (tmp_project / "ch2.tex").write_text("chapter two", encoding="utf-8")
+
+    pipeline = TexPipeline()
+    output_dir = tmp_project / "out"
+    result = pipeline.compile_to_markdown(tmp_project, output_dir=output_dir, temp_dir=tmp_project / "tmp")
+
+    assert result["errors"] == []
+    assert list(result["markdown_files"].keys()) == ["ch1", "ch2"]
+    assert Path(result["markdown_files"]["ch1"]).exists()
+    assert Path(result["markdown_files"]["ch2"]).exists()
+
+
+def test_mixed_input_and_include_preserve_source_order(tmp_project):
+    """\\input and \\include interleaved must be collected in source order, so
+    the chapter list stays aligned with pandoc's top-level output structure."""
+    main = tmp_project / "book.tex"
+    main.write_text(
+        "\\documentclass{book}\n"
+        "\\begin{document}\n"
+        "\\include{ch1}\n"
+        "\\input{ch2}\n"
+        "\\include{ch3}\n"
+        "\\input{ch4}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    for name in ("ch1", "ch2", "ch3", "ch4"):
+        (tmp_project / f"{name}.tex").write_text(f"content {name}", encoding="utf-8")
+
+    pipeline = TexPipeline()
+    config = pipeline.detect_and_resolve_config(tmp_project)
+    assert config["chapters"] == ["ch1", "ch2", "ch3", "ch4"]
+
+    result = pipeline.compile_to_markdown(
+        tmp_project, output_dir=tmp_project / "out", temp_dir=tmp_project / "tmp"
+    )
+    assert result["errors"] == []
+    assert list(result["markdown_files"].keys()) == ["ch1", "ch2", "ch3", "ch4"]
+
+
+def test_preamble_input_is_not_a_chapter(tmp_project):
+    """A preamble \\input (macros / package loads, before \\begin{document})
+    must never be taken for a chapter."""
+    main = tmp_project / "book.tex"
+    main.write_text(
+        "\\documentclass{book}\n"
+        "\\input{macros}\n"
+        "\\begin{document}\n"
+        "\\input{ch1}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tmp_project / "macros.tex").write_text("\\newcommand{\\foo}{bar}", encoding="utf-8")
+    (tmp_project / "ch1.tex").write_text("chapter one", encoding="utf-8")
+
+    pipeline = TexPipeline()
+    config = pipeline.detect_and_resolve_config(tmp_project)
+
+    assert config["chapters"] == ["ch1"]
+    assert "macros" not in config["chapters"]
+
+
+def test_input_in_subdirectory_resolves(tmp_project):
+    """A subdirectory \\input target resolves via the subdir and implicit .tex
+    extension; the chapter key is the file stem."""
+    main = tmp_project / "book.tex"
+    main.write_text(
+        "\\documentclass{book}\n"
+        "\\begin{document}\n"
+        "\\input{chapters/intro}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tmp_project / "chapters").mkdir()
+    (tmp_project / "chapters" / "intro.tex").write_text("intro content", encoding="utf-8")
+
+    pipeline = TexPipeline()
+    output_dir = tmp_project / "out"
+    result = pipeline.compile_to_markdown(tmp_project, output_dir=output_dir, temp_dir=tmp_project / "tmp")
+
+    assert result["errors"] == []
+    assert list(result["markdown_files"].keys()) == ["intro"]
+    assert Path(result["markdown_files"]["intro"]).exists()
+
+
+def test_skips_commented_inputs(tmp_project):
+    """A commented-out \\input is toggled off and must be skipped."""
+    main = tmp_project / "book.tex"
+    main.write_text(
+        "\\documentclass{book}\n"
+        "\\begin{document}\n"
+        "\\input{ch1}\n"
+        "%\\input{ch2}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tmp_project / "ch1.tex").write_text("chapter one", encoding="utf-8")
+    (tmp_project / "ch2.tex").write_text("chapter two", encoding="utf-8")
+
+    pipeline = TexPipeline()
+    output_dir = tmp_project / "out"
+    result = pipeline.compile_to_markdown(tmp_project, output_dir=output_dir, temp_dir=tmp_project / "tmp")
+
+    assert "ch2" not in result["markdown_files"]
+    assert "ch1" in result["markdown_files"]
+
+
 def test_single_file_no_includes(tmp_project):
     main = tmp_project / "book.tex"
     main.write_text(
