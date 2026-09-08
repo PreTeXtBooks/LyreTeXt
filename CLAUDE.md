@@ -89,7 +89,13 @@ and is provisional — revise it if the real contention shows up elsewhere.
 *Overrides Part 2 — "Deciding without asking → Autonomous session", and the spawned-agent
 assumption in "Worktrees".*
 
-This repo does not run unattended autonomous agents. Two rules:
+This repo does not run unattended autonomous agents, **and the main session does not
+author source code.** All source-code changes — creating or editing files under
+`lyretext/`, `frontend/`, `tests/`, or any other code path — are made by a **gated
+subagent**, never by the main session directly. The main session plans, investigates,
+runs and reads tests, manages issues / PRs / decision records, and edits **coordination
+docs only** (this file, `ROADMAP.md`, `.gitignore`, `.claude/resume/`) — it does not write
+or edit code. When code needs writing, spawn a chip (below); do not do it inline. Then:
 
 1. **Spawn subagents as spawn-task chips, not auto-launched Agent or background calls.**
    Surface the work as a chip the maintainer clicks to launch; the maintainer decides when
