@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -45,12 +46,26 @@ def review_chapter(
         # Nothing to review (e.g. dry_run produced no file)
         return {}
 
+    # Prior findings make review stateful across passes (#33): they are fed to
+    # each check as additive context and to finalize_review for reconciliation.
+    prior_findings: list[dict[str, Any]] = []
+    sidecar = path_obj.parent / ".lyretext" / f"{chapter_id}.findings.json"
+    if sidecar.exists():
+        try:
+            prior_findings = [
+                i for i in json.loads(sidecar.read_text(encoding="utf-8")).get("issues", [])
+                if isinstance(i, dict)
+            ]
+        except (OSError, json.JSONDecodeError):
+            prior_findings = []
+
     review_graph = build_review_graph("translate")
     initial: dict = {
         "output_path": output_path,
         "chapter_id": chapter_id,
         "artifact": artifact,
         "issues": [],
+        "prior_findings": prior_findings,
     }
     result = review_graph.invoke(initial, config=config)
     return {"chapter_findings": result.get("findings")}

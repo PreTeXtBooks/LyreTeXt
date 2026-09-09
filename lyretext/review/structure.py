@@ -40,6 +40,12 @@ class Issue(IssueDraft):
     group_key: Optional[str] = None
     # Set to True when the user dismisses this issue from the UI
     ignored: bool = False
+    # Review-derived lifecycle, reconciled across passes by finding_identity
+    # (see review.grouping / finalize_review). "open" = still applies to the
+    # current output; "fixed" = a prior finding the latest review no longer
+    # sees, auto-resolved. Orthogonal to ``ignored`` (user suppression): a
+    # finding is *active* iff status == "open" and not ignored.
+    status: Literal["open", "fixed"] = "open"
 
 
 class ReviewReport(BaseModel):

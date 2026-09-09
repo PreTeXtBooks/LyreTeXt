@@ -1303,7 +1303,7 @@ function findingsToolbar(c, issues) {
   const label = state.wsFindingsGrouped
     ? `${issues.length} findings in ${grouped} group${grouped === 1 ? "" : "s"}`
     : `${issues.length} finding${issues.length === 1 ? "" : "s"}, listed individually`;
-  const selectable = issues.reduce((n, f) => n + (f.ignored ? 0 : 1), 0);
+  const selectable = issues.reduce((n, f) => n + (f.ignored || f.status === "fixed" ? 0 : 1), 0);
   const queued = state.wsFixQueue.size;
   return `<div class="row gap-2" style="margin-top:12px;flex-wrap:wrap">
     <span style="font-size:11px;letter-spacing:.07em;font-weight:600;color:var(--text-ghost);margin-right:2px">FINDINGS</span>
@@ -1333,10 +1333,14 @@ function fixQueueBar(c, issues) {
 
 function findingRow(c, g) {
   const rep = g.rep;
-  // Only live occurrences are acted on: ignored ones have been dealt with, and
-  // re-sending them would resurrect a finding the user already dismissed.
-  const live = g.indices.filter((_, k) => !g.items[k].ignored);
+  // Only live occurrences are acted on: ignored ones have been dealt with and
+  // re-sending them would resurrect a finding the user dismissed; fixed ones
+  // are ones the latest review no longer sees (auto-resolved, #33).
+  const live = g.indices.filter((_, k) => !g.items[k].ignored && g.items[k].status !== "fixed");
   const count = g.indices.length;
+  // A group with no live occurrences is either user-dismissed or auto-resolved;
+  // the latter (no ignored occurrence) gets a "resolved" affordance, not un-ignore.
+  const resolved = live.length === 0 && g.items.every((f) => f.status === "fixed" && !f.ignored);
   const dimmed = live.length === 0;
   const idxs = live.join(",");
   const allIdxs = g.indices.join(",");
@@ -1387,7 +1391,9 @@ function findingRow(c, g) {
       ${fixable ? `<button class="btn btn-sm" data-action="${action}" data-id="${esc(c.id)}" data-idx="${esc(idxs)}" data-idxs="${esc(idxs)}">${esc(fixLabel)}</button>` : ""}
       ${live.length
         ? `<button class="btn btn-sm btn-ghost" data-action="${dismissAction}" data-id="${esc(c.id)}" data-idx="${esc(idxs)}" data-idxs="${esc(idxs)}">${esc(ignoreLabel)}</button>`
-        : `<button class="btn btn-sm btn-ghost" data-action="restoreIssues" data-id="${esc(c.id)}" data-idxs="${esc(allIdxs)}" title="Dismissals persist across re-reviews — this brings the finding back">Un-ignore</button>`}
+        : resolved
+          ? `<span class="sev sev-info" title="The latest review no longer finds this — auto-resolved">${ICONS.check} Resolved</span>`
+          : `<button class="btn btn-sm btn-ghost" data-action="restoreIssues" data-id="${esc(c.id)}" data-idxs="${esc(allIdxs)}" title="Dismissals persist across re-reviews — this brings the finding back">Un-ignore</button>`}
     </span>
   </div>`;
 }

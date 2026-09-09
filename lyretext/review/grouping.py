@@ -54,3 +54,31 @@ def group_key(*, check_id: str | None, message: str | None, suggestion: str | No
     # No suggestion to key on — fall back to the finding itself, scoped to its
     # check so unrelated suggestion-less findings never share a row.
     return f"finding | {check_id or ''} | {normalise(message)}"
+
+
+def finding_identity(issue: object) -> str:
+    """Stable cross-run identity of a finding — the reconciliation seam (#33).
+
+    Chosen implementation (decision: reuse ``group_key``): a finding's identity
+    *is* its group key — the normalised content key the review gate UI and the
+    dismissal-carry already share. Keeping reconciliation on that same rule is
+    what stops the three from drifting apart.
+
+    Swap this body for a block anchor (``block_id``, issue-draft 005) once
+    block-level translation populates it, and finalize_review's reconciliation
+    follows without further change — that is the whole point of the seam.
+
+    Accepts an ``Issue`` or a raw sidecar dict.
+    """
+    if isinstance(issue, dict):
+        get = issue.get
+    else:
+        get = lambda k, d=None: getattr(issue, k, d)  # noqa: E731
+    stored = get("group_key")
+    if stored:
+        return stored
+    return group_key(
+        check_id=get("check_id"),
+        message=get("message"),
+        suggestion=get("suggestion"),
+    )
