@@ -18,9 +18,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lyretext.review.agents import finalize_review, run_check
+from lyretext.review.agents import _prior_context, finalize_review, run_check
 from lyretext.review.checks import CheckSpec
-from lyretext.review.grouping import group_key, normalise
+from lyretext.review.grouping import finding_identity, group_key, normalise
 from lyretext.review.structure import Issue
 
 
@@ -197,3 +197,114 @@ class TestCheckOwnsAutoFixable:
     def test_check_id_is_attributed(self):
         issues = self._run(spec_auto_fixable=True)["issues"]
         assert issues[0].check_id == "math_notation"
+
+
+class TestFindingIdentity:
+    """Cross-run identity is the group key (decision: reuse group_key, #33)."""
+
+    def test_identity_is_the_group_key(self):
+        i = _issue(7)
+        assert finding_identity(i) == group_key(
+            check_id=i.check_id, message=i.message, suggestion=i.suggestion
+        )
+
+    def test_identity_survives_a_line_shift(self):
+        assert finding_identity(_issue(7)) == finding_identity(_issue(214))
+
+    def test_a_stored_group_key_is_preferred(self):
+        # A sidecar dict carries its group_key; identity must use it verbatim
+        # rather than re-deriving, so it cannot drift from what was stored.
+        assert finding_identity({"group_key": "fix | already stored"}) == "fix | already stored"
+
+
+class TestAutoResolve:
+    """A prior finding the latest review no longer sees is auto-resolved (#33)."""
+
+    def test_a_vanished_finding_becomes_fixed_and_drops_from_counts(self, tmp_path):
+        finalize_review(_state(tmp_path, [_issue(7)]))
+        result = finalize_review(_state(tmp_path, []))  # review sees nothing now
+        issues = result["findings"]["issues"]
+        assert len(issues) == 1 and issues[0]["status"] == "fixed"
+        assert result["findings"]["counts"] == {"error": 0, "warn": 0, "info": 0}
+
+    def test_a_still_present_finding_stays_open(self, tmp_path):
+        finalize_review(_state(tmp_path, [_issue(7)]))
+        result = finalize_review(_state(tmp_path, [_issue(41)]))  # same identity, moved
+        assert [i["status"] for i in result["findings"]["issues"]] == ["open"]
+        assert result["findings"]["counts"]["warn"] == 1
+
+    def test_a_fixed_finding_that_reappears_reopens(self, tmp_path):
+        finalize_review(_state(tmp_path, [_issue(7)]))
+        finalize_review(_state(tmp_path, []))                       # -> fixed
+        result = finalize_review(_state(tmp_path, [_issue(7)]))     # regression
+        assert [i["status"] for i in result["findings"]["issues"]] == ["open"]
+        assert result["findings"]["counts"]["warn"] == 1
+
+    def test_a_vanished_error_stops_blocking(self, tmp_path):
+        finalize_review(_state(tmp_path, [_issue(7, severity="error")]))
+        result = finalize_review(_state(tmp_path, []))
+        assert result["review_status"] == "passing"
+
+    def test_the_fixed_finding_persists_in_the_record(self, tmp_path):
+        """Append-only: auto-resolve is a state transition, not a deletion."""
+        finalize_review(_state(tmp_path, [_issue(7)]))
+        finalize_review(_state(tmp_path, []))
+        on_disk = json.loads(_sidecar(tmp_path).read_text(encoding="utf-8"))
+        assert [i["status"] for i in on_disk["issues"]] == ["fixed"]
+
+
+class TestIgnoredIsNotAutoResolved:
+    """A dismissed finding stays dismissed even when the review stops seeing it."""
+
+    def test_ignored_and_gone_stays_ignored_not_fixed(self, tmp_path):
+        finalize_review(_state(tmp_path, [_issue(7)]))
+        findings = json.loads(_sidecar(tmp_path).read_text(encoding="utf-8"))
+        findings["issues"][0]["ignored"] = True
+        _sidecar(tmp_path).write_text(json.dumps(findings), encoding="utf-8")
+
+        result = finalize_review(_state(tmp_path, []))  # review no longer sees it
+        issue = result["findings"]["issues"][0]
+        assert issue["ignored"] is True and issue["status"] != "fixed"
+
+
+class TestPriorContextIsFedToTheAgent:
+    """Additive review: the previous pass is offered back to each check (#33)."""
+
+    def test_open_prior_is_offered_for_re_report(self):
+        text = _prior_context(
+            [{"check_id": "math_notation", "message": "bare $", "line": 7}], "math_notation"
+        )
+        assert text and "bare $" in text and "STILL applies" in text
+
+    def test_dismissed_prior_is_marked_context_only(self):
+        text = _prior_context(
+            [{"check_id": "math_notation", "message": "bare $", "ignored": True}], "math_notation"
+        )
+        assert "dismissed" in text.lower()
+
+    def test_context_is_scoped_to_the_check(self):
+        assert _prior_context(
+            [{"check_id": "other_check", "message": "not mine"}], "math_notation"
+        ) is None
+
+    def test_no_prior_findings_adds_nothing(self):
+        assert _prior_context([], "math_notation") is None
+
+    def test_run_check_puts_prior_context_in_the_prompt(self):
+        spec = CheckSpec(
+            id="math_notation", name="Math", target_stage="translate",
+            prompt_key="math_notation",
+        )
+        llm = MagicMock()
+        invoke = llm.with_structured_output.return_value.invoke
+        invoke.return_value = {"issues": []}
+        state = {
+            "artifact": "<chapter/>",
+            "chapter_id": "ch1",
+            "prior_findings": [{"check_id": "math_notation", "message": "bare $ at line 7"}],
+        }
+        with patch("lyretext.review.agents.create_llm", return_value=llm):
+            run_check(spec)(state, None)
+        sent = invoke.call_args.args[0][0].content
+        blob = " ".join(part.get("text", "") for part in sent)
+        assert "bare $ at line 7" in blob

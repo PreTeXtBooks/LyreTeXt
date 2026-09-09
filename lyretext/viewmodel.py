@@ -47,10 +47,18 @@ def load_chapter_findings(output_dir: str, chapter_id: str) -> dict[str, Any] | 
 
 
 def _active_issues(findings: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Findings the user has not dismissed."""
+    """Findings that still bear on the gate: not dismissed and not auto-resolved.
+
+    ``status == "fixed"`` marks a prior finding the latest review no longer sees
+    (#33); like a dismissal it stays in the sidecar for continuity but drops out
+    of counts and the blocking check.
+    """
     if findings is None:
         return []
-    return [i for i in findings.get("issues", []) if not i.get("ignored")]
+    return [
+        i for i in findings.get("issues", [])
+        if not i.get("ignored") and i.get("status", "open") != "fixed"
+    ]
 
 
 def _has_blocking_issue(findings: dict[str, Any] | None) -> bool:
