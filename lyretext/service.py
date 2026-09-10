@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import zipfile
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -27,6 +28,7 @@ from .orchestration.checkpointing import (
     build_checkpoint_config,
     build_chapter_checkpoint_config,
     ensure_run_id,
+    list_run_thread_ids,
 )
 from .orchestration.graph import (
     _active_chapter_graph,
@@ -43,7 +45,9 @@ from .orchestration.graph import (
 )
 from .render import build_main_ptx, render_pretext
 from .review.grouping import group_key
-from .viewmodel import build_view_model, load_chapter_findings
+from .viewmodel import build_run_summary, build_view_model, load_chapter_findings
+
+logger = logging.getLogger("lyretext.service")
 
 _DEFAULT_CONFIG_FILE = Path("config.yml")
 
@@ -120,6 +124,32 @@ def get_run_view(
         executing_chapters=executing_chapters,
         run_executing=run_executing,
     )
+
+
+def list_run_summaries(checkpointer: BaseCheckpointSaver) -> list[dict[str, Any]]:
+    """Return a lightweight summary for every run, newest first.
+
+    Enumerates run-level checkpoint threads and builds a per-run summary from
+    each run's own snapshot only — no per-chapter thread reads, no history (see
+    build_run_summary). This is what the runs library lists, and it replaces the
+    old frontend N+1 (list run ids, then a full get_run per id).
+
+    Error granularity is deliberate: a failure to *enumerate* the checkpointer
+    propagates (the whole listing is broken and the caller must know), but a
+    single run whose snapshot is stale or unreadable is skipped with a warning
+    rather than taking down the entire list.
+    """
+    summaries: list[dict[str, Any]] = []
+    for run_id, updated_at in list_run_thread_ids(checkpointer):
+        try:
+            summary = build_run_summary(run_id, checkpointer, updated_at=updated_at)
+        except Exception:
+            logger.warning("Skipping run %r: summary could not be built", run_id, exc_info=True)
+            continue
+        if summary is not None:
+            summaries.append(summary)
+    summaries.sort(key=lambda s: s.get("updated_at") or "", reverse=True)
+    return summaries
 
 
 # ---------------------------------------------------------------------------

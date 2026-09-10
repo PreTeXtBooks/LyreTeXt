@@ -39,6 +39,7 @@ from .service import (
     get_jobs,
     get_output,
     get_run_view,
+    list_run_summaries,
     remap_chapter_source,
     render_chapter_output,
     ASSET_SUFFIXES,
@@ -297,14 +298,18 @@ def read_file_content(path: str = Query(..., description="Absolute path to a pro
 
 @app.get("/api/runs")
 async def list_runs():
-    """List all known run IDs from the checkpointer."""
-    cp = _cp()
-    try:
-        # SqliteSaver exposes list_threads; MemorySaver may not
-        threads = [t for t in cp.list_threads()]  # type: ignore[attr-defined]
-        return {"runs": [{"run_id": str(t)} for t in threads]}
-    except Exception:
-        return {"runs": []}
+    """List every run as a lightweight summary for the runs library.
+
+    Each entry carries name, status, stage, chapter progress and updated-at,
+    computed from the run's own checkpoint snapshot without building the full
+    view model or fanning out to per-chapter threads — so the frontend renders
+    the list from one call instead of a get_run per run.
+
+    A genuine failure to enumerate the checkpointer is *not* swallowed here (it
+    surfaces as a 500); only individual stale runs are skipped, inside
+    list_run_summaries.
+    """
+    return {"runs": await _read_in_thread(list_run_summaries, _cp())}
 
 
 @app.post("/api/runs", status_code=202)

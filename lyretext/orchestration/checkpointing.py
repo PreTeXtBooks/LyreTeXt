@@ -51,6 +51,13 @@ def build_checkpoint_config(
     return {"configurable": configurable}
 
 
+# Marker separating a run's own thread id from a chapter sub-thread id. It is
+# the single source of truth for both minting chapter thread ids and telling
+# the two kinds of thread apart when enumerating (see is_chapter_thread_id /
+# list_run_thread_ids), so the runs library never lists a chapter as a run.
+CHAPTER_THREAD_MARKER = "::chapter::"
+
+
 def build_chapter_thread_id(run_id: str, chapter_id: str) -> str:
     """Thread id for one chapter's independent graph invocation.
 
@@ -61,7 +68,46 @@ def build_chapter_thread_id(run_id: str, chapter_id: str) -> str:
     thread_id, so a shared thread would force all chapter operations for a
     run to serialize behind a single lock.
     """
-    return f"{run_id}::chapter::{chapter_id}"
+    return f"{run_id}{CHAPTER_THREAD_MARKER}{chapter_id}"
+
+
+def is_chapter_thread_id(thread_id: str) -> bool:
+    """True for a per-chapter sub-thread (see build_chapter_thread_id).
+
+    The runs library enumerates every checkpoint thread and must show only the
+    run-level ones; a chapter sub-thread is an implementation detail, not a
+    run, so it is filtered out here.
+    """
+    return CHAPTER_THREAD_MARKER in thread_id
+
+
+def list_run_thread_ids(
+    checkpointer: BaseCheckpointSaver,
+) -> list[tuple[str, str | None]]:
+    """Return ``(run_id, updated_at)`` for every run-level checkpoint thread.
+
+    Enumerates the checkpointer with ``list(None)`` — which yields one tuple per
+    checkpoint across *all* threads, newest first — and reduces it to distinct
+    run threads, dropping the ``::chapter::`` sub-threads. The first checkpoint
+    seen for a thread is its most recent (the ordering guarantee), so its
+    timestamp becomes the run's ``updated_at``. Result is newest-first.
+
+    Deliberately does not catch enumeration errors: a checkpointer that cannot
+    be listed is a real failure the caller must see, not an empty list. This
+    replaces the earlier ``checkpointer.list_threads()`` call, which no backend
+    actually implements — it raised ``AttributeError`` on every request and was
+    silently swallowed into an always-empty runs list.
+    """
+    seen: dict[str, str | None] = {}
+    for tup in checkpointer.list(None):
+        configurable = (getattr(tup, "config", None) or {}).get("configurable", {})
+        thread_id = configurable.get("thread_id")
+        if not thread_id or is_chapter_thread_id(thread_id):
+            continue
+        if thread_id not in seen:
+            checkpoint = getattr(tup, "checkpoint", None) or {}
+            seen[thread_id] = checkpoint.get("ts")
+    return list(seen.items())
 
 
 def build_chapter_checkpoint_config(

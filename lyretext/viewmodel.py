@@ -367,6 +367,92 @@ def _build_jobs_view(
 
 
 # ---------------------------------------------------------------------------
+# Lightweight per-run summary (runs library)
+# ---------------------------------------------------------------------------
+
+def _snapshot_interrupts(snapshot: Any) -> list[dict[str, Any]]:
+    """Pending interrupts on a thread snapshot as ``{interrupt_id, **value}`` dicts."""
+    result: list[dict[str, Any]] = []
+    for intr in (getattr(snapshot, "interrupts", None) or []):
+        value = getattr(intr, "value", None)
+        if isinstance(value, dict):
+            result.append({"interrupt_id": getattr(intr, "id", ""), **value})
+    return result
+
+
+def build_run_summary(
+    run_id: str,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    updated_at: str | None = None,
+) -> dict[str, Any] | None:
+    """Build a lightweight listing summary for *run_id*, or None if not a real run.
+
+    This is the runs-library counterpart to :func:`build_view_model`, and the
+    point of it is what it *doesn't* do: it reads the run's own thread snapshot
+    only. It never descends into each chapter's checkpoint thread and never
+    walks checkpoint history — the two costs that make the full view model too
+    heavy to fan out across every run just to render a list. Chapter progress
+    is taken from cheap on-disk ``.ptx`` presence instead.
+
+    Returns None when no usable snapshot exists (an orphaned or stale thread),
+    so the caller can drop it from the list rather than surface a broken row.
+
+    Fields: run_id, name, source, source_type, status, stage, chapters_done,
+    chapters_total, read_pending, updated_at.
+    """
+    graph = _active_workflow_graph(checkpointer)
+    snapshot = graph.get_state(build_checkpoint_config(run_id=run_id))
+    if snapshot is None or not snapshot.values:
+        return None
+
+    values: dict[str, Any] = snapshot.values
+    manifest: list[dict] = values.get("manifest", [])
+    project_source: str = values.get("project_source", "")
+    project_type: str = values.get("project_type", "rmd")
+    output_dir: str = values.get("output_dir", "")
+
+    read_pending = any(
+        i.get("type") == "validation_gate_blocked" for i in _snapshot_interrupts(snapshot)
+    )
+
+    total = len(manifest)
+    done = 0
+    if output_dir:
+        for ch in manifest:
+            out = ch.get("output_path", "")
+            if out and Path(out).exists():
+                done += 1
+
+    # Coarse run-level status, from the run snapshot + output presence alone —
+    # deliberately not per-chapter review state (that needs the chapter threads
+    # and belongs to the detail view). "reading" is before the manifest exists;
+    # "read_gate" is the manifest awaiting human approval; then translating
+    # until every chapter has produced output.
+    if read_pending:
+        status, stage = "read_gate", "Manifest review"
+    elif total == 0:
+        status, stage = "reading", "Reading project"
+    elif done >= total:
+        status, stage = "complete", "Complete"
+    else:
+        status, stage = "translating", f"Translating {done}/{total}"
+
+    return {
+        "run_id": run_id,
+        "name": Path(project_source).name if project_source else run_id,
+        "source": project_source,
+        "source_type": project_type,
+        "status": status,
+        "stage": stage,
+        "chapters_done": done,
+        "chapters_total": total,
+        "read_pending": read_pending,
+        "updated_at": updated_at,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main view-model builder
 # ---------------------------------------------------------------------------
 
