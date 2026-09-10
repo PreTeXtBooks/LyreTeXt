@@ -6,6 +6,7 @@
 
 const ICONS = {
   newrun: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
+  runs: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
   chapters: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
   workspace: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/></svg>`,
   jobs: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>`,
@@ -33,6 +34,10 @@ const state = {
   view: null,
   runsList: [],
   runsListLoaded: false,
+  // Runs library page controls (view preferences, not run state).
+  runsSearch: "",
+  runsFilter: "all",     // all | reading | read_gate | translating | complete
+  runsSort: "recent",    // recent | name | progress
   chosenSource: "",
   chosenSourceLabel: "",
   uploadFiles: null,
@@ -629,22 +634,11 @@ function stopPolling() {
 async function loadRunsList() {
   state.runsListLoaded = true;
   try {
+    // One call now returns a per-run summary (name, status, progress,
+    // updated-at) — the old code fired a full getRun per run (an N+1) just to
+    // derive these, which is exactly what GET /api/runs now does server-side.
     const { runs } = await LyreAPI.listRuns();
-    const enriched = [];
-    for (const r of runs || []) {
-      try {
-        const view = await LyreAPI.getRun(r.run_id);
-        const total = (view.chapters || []).length;
-        const done = (view.chapters || []).filter(isApproved).length;
-        enriched.push({
-          run_id: r.run_id,
-          name: view.project?.name || r.run_id,
-          gatePending: !!view.gate?.read_pending,
-          done, total,
-        });
-      } catch { /* stale/incompatible checkpoint — skip it from the resume list */ }
-    }
-    state.runsList = enriched;
+    state.runsList = runs || [];
   } catch {
     state.runsList = [];
   }
@@ -672,6 +666,7 @@ function renderApp() {
         <div class="nav-label">Pipeline</div>
         <nav class="nav">
           ${navItem("newrun", ICONS.newrun, "New Run")}
+          ${navItem("runs", ICONS.runs, "Runs")}
           ${navItem("chapters", ICONS.chapters, "Chapters")}
           ${navItem("workspace", ICONS.workspace, "Workspace")}
           ${navItem("jobs", ICONS.jobs, "Jobs", executingAny)}
@@ -733,6 +728,7 @@ function sideAccount() {
 function renderTab() {
   switch (state.tab) {
     case "newrun": return renderNewRun();
+    case "runs": return renderRuns();
     case "manifest": return renderManifest();
     case "chapters": return renderChapters();
     case "workspace": return renderWorkspace();
@@ -820,21 +816,155 @@ function renderNewRun() {
   `;
 }
 
+// --- Runs library shared bits ---------------------------------------------
+
+// Map a run summary's status to a pill class + label, and a bare dot colour.
+// One place so the teaser (New Run) and the Runs page read identically.
+const RUN_STATUS = {
+  reading:     { pill: "pill-info",    dot: "var(--info-dot)", label: "Reading" },
+  read_gate:   { pill: "pill-warn",    dot: "var(--warn-dot)", label: "Manifest review" },
+  translating: { pill: "pill-info",    dot: "var(--info-dot)", label: "Translating" },
+  complete:    { pill: "pill-ok",      dot: "var(--ok-dot)",   label: "Complete" },
+};
+function runStatusMeta(r) {
+  return RUN_STATUS[r.status] || { pill: "pill-neutral", dot: "var(--neutral-dot)", label: r.status || "Unknown" };
+}
+
+// Compact "time ago" from an ISO timestamp, for the updated-at column.
+function timeAgo(iso) {
+  if (!iso) return "";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const secs = Math.max(0, (Date.now() - then) / 1000);
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(then).toLocaleDateString();
+}
+
+// The New Run tab's teaser: a few most-recent runs plus a link to the full
+// Runs page. Deliberately not a second copy of the library — just a shortcut.
 function renderResumeList() {
   if (!state.runsListLoaded) {
     setTimeout(loadRunsList, 0);
-    return `<div class="empty-note">${ICONS.spinner} Loading previous runs…</div>`;
+    return `<div class="empty-note">${ICONS.spinner} Loading recent runs…</div>`;
   }
   if (!state.runsList.length) return `<div class="empty-note">No previous runs yet.</div>`;
-  return state.runsList.map((r) => `
-    <div class="row" style="gap:12px;padding:11px 0;border-top:1px solid var(--divider);cursor:pointer" data-action="resumeRun" data-run="${esc(r.run_id)}">
-      <span class="pill-dot" style="background:${r.gatePending ? "var(--warn-dot)" : "var(--ok-dot)"}"></span>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13.5px;font-weight:600">${esc(r.name)}</div>
-        <div style="font-size:11.5px;color:var(--text-faint)" class="mono">${esc(r.run_id)}</div>
+  const recent = state.runsList.slice(0, 3);
+  return `
+    ${recent.map((r) => {
+      const m = runStatusMeta(r);
+      return `
+      <div class="row" style="gap:12px;padding:11px 0;border-top:1px solid var(--divider);cursor:pointer" data-action="resumeRun" data-run="${esc(r.run_id)}">
+        <span class="pill-dot" style="background:${m.dot}"></span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</div>
+          <div style="font-size:11.5px;color:var(--text-faint)">${esc(m.label)} · ${esc(timeAgo(r.updated_at) || "—")}</div>
+        </div>
+        <span class="pill ${m.pill}">${r.chapters_total ? `${r.chapters_done}/${r.chapters_total}` : m.label}</span>
+      </div>`;
+    }).join("")}
+    <button class="btn btn-ghost btn-sm" style="margin-top:12px" data-action="nav" data-tab="runs">
+      See all runs${state.runsList.length > 3 ? ` (${state.runsList.length})` : ""} ${ICONS.chevronRight}
+    </button>`;
+}
+
+// ---------------------------------------------------------------------------
+// Runs library
+// ---------------------------------------------------------------------------
+
+function filteredSortedRuns() {
+  const q = state.runsSearch.trim().toLowerCase();
+  let runs = state.runsList.filter((r) => {
+    if (state.runsFilter !== "all" && r.status !== state.runsFilter) return false;
+    if (!q) return true;
+    return (r.name || "").toLowerCase().includes(q)
+      || (r.run_id || "").toLowerCase().includes(q)
+      || (r.source || "").toLowerCase().includes(q);
+  });
+  const sorters = {
+    recent: (a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""),
+    name: (a, b) => (a.name || "").localeCompare(b.name || ""),
+    progress: (a, b) => {
+      const pa = a.chapters_total ? a.chapters_done / a.chapters_total : 0;
+      const pb = b.chapters_total ? b.chapters_done / b.chapters_total : 0;
+      return pb - pa;
+    },
+  };
+  return runs.slice().sort(sorters[state.runsSort] || sorters.recent);
+}
+
+function renderRuns() {
+  const opt = (v, label, cur) => `<option value="${v}" ${cur === v ? "selected" : ""}>${label}</option>`;
+  const controls = `
+    <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:18px">
+      <div style="position:relative;flex:1;min-width:220px">
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-faint);pointer-events:none">${ICONS.search}</span>
+        <input id="runsSearchInput" class="input" style="padding-left:38px;width:100%" placeholder="Search by name, source, or run id" value="${esc(state.runsSearch)}" data-action="onRunsSearch" />
       </div>
-      <span class="pill ${r.gatePending ? "pill-warn" : "pill-neutral"}">${r.gatePending ? "Awaiting manifest" : `${r.done}/${r.total} approved`}</span>
-    </div>`).join("");
+      <select class="select" data-action="onRunsFilter">
+        ${opt("all", "All statuses", state.runsFilter)}
+        ${opt("read_gate", "Manifest review", state.runsFilter)}
+        ${opt("reading", "Reading", state.runsFilter)}
+        ${opt("translating", "Translating", state.runsFilter)}
+        ${opt("complete", "Complete", state.runsFilter)}
+      </select>
+      <select class="select" data-action="onRunsSort">
+        ${opt("recent", "Most recent", state.runsSort)}
+        ${opt("name", "Name (A–Z)", state.runsSort)}
+        ${opt("progress", "Progress", state.runsSort)}
+      </select>
+      <button class="btn btn-ghost btn-sm" data-action="refreshRuns">${ICONS.retry} Refresh</button>
+    </div>`;
+
+  let body;
+  if (!state.runsListLoaded) {
+    setTimeout(loadRunsList, 0);
+    body = `<div class="empty-note">${ICONS.spinner} Loading runs…</div>`;
+  } else if (!state.runsList.length) {
+    body = `<div class="empty-note">No runs yet. Start one from the <a href="#" data-action="nav" data-tab="newrun">New Run</a> tab.</div>`;
+  } else {
+    const rows = filteredSortedRuns();
+    if (!rows.length) {
+      body = `<div class="empty-note">No runs match your search.</div>`;
+    } else {
+      body = rows.map((r) => {
+        const m = runStatusMeta(r);
+        const pct = r.chapters_total ? Math.round((r.chapters_done / r.chapters_total) * 100) : 0;
+        return `
+        <div class="row" style="gap:16px;padding:15px 4px;border-top:1px solid var(--divider);align-items:center">
+          <span class="pill-dot" style="background:${m.dot}"></span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</div>
+            <div style="font-size:11.5px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              <span class="mono">${esc(r.run_id)}</span>${r.source ? ` · ${esc(r.source)}` : ""}
+            </div>
+          </div>
+          <div style="width:150px;flex:none">
+            <div class="row" style="justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-bottom:5px">
+              <span>${r.chapters_total ? `${r.chapters_done}/${r.chapters_total} chapters` : "—"}</span>
+              <span>${r.chapters_total ? `${pct}%` : ""}</span>
+            </div>
+            <div class="side-progress-track"><div class="side-progress-fill" style="width:${pct}%"></div></div>
+          </div>
+          <span class="pill ${m.pill}" style="width:132px;justify-content:center;flex:none"><span class="pill-dot"></span>${esc(m.label)}</span>
+          <span style="width:78px;flex:none;font-size:12px;color:var(--text-faint);text-align:right">${esc(timeAgo(r.updated_at))}</span>
+          <button class="btn btn-primary btn-sm" style="flex:none" data-action="resumeRun" data-run="${esc(r.run_id)}">${ICONS.play} Open</button>
+        </div>`;
+      }).join("");
+    }
+  }
+
+  return `
+    ${topbar("Runs", "Every run LyreTeXt has produced — open one to review, resume, or export it.")}
+    <div class="content" style="max-width:1100px">
+      ${controls}
+      <div class="card" style="padding:6px 20px 14px">${body}</div>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1877,8 +2007,17 @@ const ACTIONS = {
     if (state.tab === "chapters" || state.tab === "workspace" || state.tab === "jobs" || state.tab === "output") {
       if (state.runId) refreshRun();
     }
+    // Entering the runs library refreshes it in the background, so a run
+    // started/advanced elsewhere shows current state rather than a stale
+    // snapshot from whenever the teaser first loaded.
+    if (state.tab === "runs" && state.runsListLoaded) loadRunsList();
     rerender();
   },
+
+  onRunsSearch(el) { state.runsSearch = el.value; rerender(); },
+  onRunsFilter(el) { state.runsFilter = el.value; rerender(); },
+  onRunsSort(el) { state.runsSort = el.value; rerender(); },
+  refreshRuns() { loadRunsList(); },
 
   browseFolder() {
     safeAction(async () => {
@@ -2365,7 +2504,7 @@ document.addEventListener("input", (e) => {
   if (!el) return;
   const handler = ACTIONS[el.dataset.action];
   if (!handler) return;
-  const live = ["onSearch", "onRemapInput", "onRefineInput", "onWsEditInput", "editManifestField"];
+  const live = ["onSearch", "onRunsSearch", "onRemapInput", "onRefineInput", "onWsEditInput", "editManifestField"];
   if (live.includes(el.dataset.action)) handler(el, e);
 });
 
