@@ -4,6 +4,7 @@
 external toolchain — see pretext_html.py for why this is a preview renderer
 rather than a call out to the PreTeXt-CLI.
 """
+from .assemble import build_main_ptx, resolve_root
 from .pretext_html import RenderResult, render_pretext
 
-__all__ = ["RenderResult", "render_pretext"]
+__all__ = ["RenderResult", "render_pretext", "build_main_ptx", "resolve_root"]

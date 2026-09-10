@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .orchestration.checkpointing import build_checkpointer, ensure_run_id
@@ -28,6 +28,7 @@ from .service import (
     apply_chapter_command,
     apply_chapter_decision,
     apply_read_gate_decision,
+    build_project_archive,
     dismiss_issue,
     dismiss_issues,
     dispatch_chapters,
@@ -916,6 +917,31 @@ async def download_output(run_id: str, filename: str):
                     media_type="application/xml",
                 )
     raise HTTPException(404, f"{filename!r} not found in run {run_id!r}")
+
+
+@app.get("/api/runs/{run_id}/project.zip")
+async def download_project(run_id: str, root: str = "auto", title: str | None = None):
+    """Download the whole run as one compilable PreTeXt project (zip).
+
+    Bundles every chapter/matter ``.ptx`` with a freshly-assembled unifying
+    ``main.ptx``. ``root`` selects the PreTeXt root element — ``auto`` (default),
+    ``book`` or ``article`` (decision #34, Option U); anything else falls back
+    to ``auto``. Runs on the exec pool because it (re)writes ``main.ptx`` to
+    disk.
+    """
+    if root not in ("auto", "book", "article"):
+        root = "auto"
+    result = await _in_thread(
+        build_project_archive, run_id, _cp(), root_element=root, title=title
+    )
+    if result is None:
+        raise HTTPException(404, f"run {run_id!r} has no output to bundle")
+    filename, data = result
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -94,6 +94,7 @@ const LyreAPI = (() => {
     // -- output / jobs ------------------------------------------------------
     getOutput: (runId) => req(`/api/runs/${encodeURIComponent(runId)}/output`),
     downloadOutputUrl: (runId, filename) => `/api/runs/${encodeURIComponent(runId)}/output/${encodeURIComponent(filename)}`,
+    projectZipUrl: (runId, root) => `/api/runs/${encodeURIComponent(runId)}/project.zip?root=${encodeURIComponent(root || "auto")}`,
     getJobs: (runId) => req(`/api/runs/${encodeURIComponent(runId)}/jobs`),
 
     // -- settings -------------------------------------------------------------

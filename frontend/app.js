@@ -1730,7 +1730,18 @@ function renderOutput() {
     ${topbar("Output", "Generated PreTeXt files, ready to download.")}
     <div class="content" style="display:grid;grid-template-columns:340px minmax(0,1fr);gap:22px;align-items:start">
       <div class="table-wrap">
-        <div style="padding:12px 16px;border-bottom:1px solid var(--divider)" class="mono" style="font-size:11.5px;color:var(--text-ghost)">OUTPUT/</div>
+        <div style="padding:12px 16px;border-bottom:1px solid var(--divider)">
+          <div class="row" style="justify-content:space-between;gap:10px;margin-bottom:10px">
+            <span class="mono" style="font-size:11.5px;color:var(--text-ghost)">OUTPUT/</span>
+            ${files.length ? `<a class="btn btn-sm btn-primary" href="${LyreAPI.projectZipUrl(state.runId, state.projectRoot || "auto")}">${ICONS.download} Project .zip</a>` : ""}
+          </div>
+          <label class="row gap-2" style="font-size:11.5px;color:var(--text-ghost)" title="PreTeXt root element for the generated main.ptx. Auto picks book when the project has chapters, else article.">
+            <span>main.ptx root</span>
+            <select data-action="setProjectRoot" class="mono" style="font-size:11.5px;flex:1">
+              ${["auto", "book", "article"].map((r) => `<option value="${r}" ${(state.projectRoot || "auto") === r ? "selected" : ""}>${r}</option>`).join("")}
+            </select>
+          </label>
+        </div>
         ${files.length ? files.map((f) => `
           <div class="row" style="gap:10px;padding:11px 16px;border-top:1px solid var(--divider);cursor:pointer;${f.file === state.outputSelected ? "background:var(--accent-soft-bg);border-left:3px solid var(--accent)" : "border-left:3px solid transparent"}" data-action="selectOutput" data-file="${esc(f.file)}">
             ${ICONS.folder}<span class="mono" style="font-size:12.5px;flex:1;word-break:break-all">${esc(f.file)}</span><span style="font-size:11px;color:var(--text-ghost)">${fmtSize(f.size)}</span>
@@ -2211,6 +2222,7 @@ const ACTIONS = {
 
   // -- output ---------------------------------------------------------------
   selectOutput(el) { state.outputSelected = el.dataset.file; state.outputContent = null; rerender(); },
+  setProjectRoot(el) { state.projectRoot = el.value; rerender(); },
   copyOutput() {
     const text = state.outputContent?.text;
     if (text == null) return;

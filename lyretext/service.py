@@ -13,7 +13,9 @@ get_output         – list generated .ptx files for a run
 """
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -39,7 +41,7 @@ from .orchestration.graph import (
     resume_chapter_graph,
     resume_workflow_graph,
 )
-from .render import render_pretext
+from .render import build_main_ptx, render_pretext
 from .review.grouping import group_key
 from .viewmodel import build_view_model, load_chapter_findings
 
@@ -915,8 +917,138 @@ def revert_chapter_to_checkpoint(
     }
 
 
+# ---------------------------------------------------------------------------
+# Project manifest (main.ptx)
+# ---------------------------------------------------------------------------
+
+MAIN_PTX_FILENAME = "main.ptx"
+
+
+def _run_values(
+    run_id: str, checkpointer: BaseCheckpointSaver
+) -> dict[str, Any] | None:
+    """Return the run thread's checkpointed values, or None if absent."""
+    graph = _active_workflow_graph(checkpointer)
+    snapshot = graph.get_state(build_checkpoint_config(run_id=run_id))
+    if snapshot is None or not snapshot.values:
+        return None
+    return snapshot.values
+
+
+def assemble_main_ptx(
+    run_id: str,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    root_element: str = "auto",
+    title: str | None = None,
+) -> str | None:
+    """Build the unifying ``main.ptx`` XML for a run from its approved manifest.
+
+    Deterministic string building (see render.assemble) — no files are read or
+    written here. Returns None when the run has no manifest yet. *title*
+    defaults to the project source's name; *root_element* is ``"auto"`` /
+    ``"book"`` / ``"article"`` (decision #34, Option U).
+    """
+    values = _run_values(run_id, checkpointer)
+    if values is None:
+        return None
+    manifest = values.get("manifest") or []
+    if not manifest:
+        return None
+    if title is None:
+        source = values.get("project_source", "")
+        title = Path(source).name if source else "Untitled"
+    return build_main_ptx(manifest, title=title, root_element=root_element)
+
+
+def write_main_ptx(
+    run_id: str,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    root_element: str = "auto",
+    title: str | None = None,
+) -> Path | None:
+    """Write ``main.ptx`` into the run's output directory, returning its path.
+
+    Regenerated from the current manifest on every call so it always reflects
+    the chapter set on disk; assembly is deterministic, so rewriting it is
+    idempotent. Returns None when there is no manifest or no output directory.
+    """
+    values = _run_values(run_id, checkpointer)
+    if values is None:
+        return None
+    output_dir = values.get("output_dir", "")
+    if not output_dir:
+        return None
+    xml = assemble_main_ptx(
+        run_id, checkpointer, root_element=root_element, title=title
+    )
+    if xml is None:
+        return None
+    path = Path(output_dir) / MAIN_PTX_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(xml, encoding="utf-8")
+    return path
+
+
+def build_project_archive(
+    run_id: str,
+    checkpointer: BaseCheckpointSaver,
+    *,
+    root_element: str = "auto",
+    title: str | None = None,
+) -> tuple[str, bytes] | None:
+    """Bundle a run's output into a complete, compilable PreTeXt project zip.
+
+    Writes a fresh ``main.ptx`` into the output directory (so the on-disk
+    project is complete too, for anyone building it directly), then packs it
+    together with every chapter/matter ``.ptx`` from the manifest into a zip.
+
+    Returns ``(filename, zip_bytes)`` or None when the run has no output.
+    """
+    main_path = write_main_ptx(
+        run_id, checkpointer, root_element=root_element, title=title
+    )
+    if main_path is None:
+        return None
+
+    values = _run_values(run_id, checkpointer) or {}
+    manifest = values.get("manifest") or []
+
+    # main.ptx first, then fragments in manifest order; de-dupe by filename so
+    # two manifest entries that somehow share a name can't double-add.
+    paths = [main_path] + [Path(ch["output_path"]) for ch in manifest]
+    buffer = io.BytesIO()
+    seen: set[str] = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in paths:
+            if path.name in seen or not path.exists():
+                continue
+            archive.write(path, arcname=path.name)
+            seen.add(path.name)
+    buffer.seek(0)
+
+    source = values.get("project_source", "")
+    project = (Path(source).stem if source else "") or "project"
+    return f"{project}.zip", buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
 def get_output(run_id: str, checkpointer: BaseCheckpointSaver) -> list[dict[str, Any]]:
-    """Return the list of generated .ptx files for *run_id*."""
+    """Return the list of generated .ptx files for *run_id*.
+
+    Refreshes the unifying ``main.ptx`` first so the output directory is a
+    complete, buildable project and the manifest shows up in the listing
+    alongside the chapters. The refresh is best-effort: a listing must never
+    fail because assembly did.
+    """
+    try:
+        write_main_ptx(run_id, checkpointer)
+    except Exception:  # pragma: no cover - defensive; listing must still work
+        pass
     view = get_run_view(run_id, checkpointer)
     return view.get("output", [])
 
