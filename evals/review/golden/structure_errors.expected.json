@@ -1,0 +1,40 @@
+{
+  "description": "Well-formed XML with four PreTeXt structure errors, one per pretext_structure rule. The math is all correctly marked up, so any math_notation finding here is a false positive.",
+  "checks": null,
+  "expected": [
+    {
+      "label": "definition-missing-statement",
+      "check_id": "pretext_structure",
+      "line": 4,
+      "end_line": 8,
+      "anchor": "<definition xml:id=\"def-subset\">",
+      "severity": "warn",
+      "note": "A <definition> must wrap its content in <statement>."
+    },
+    {
+      "label": "ol-non-li-child",
+      "check_id": "pretext_structure",
+      "line": 11,
+      "anchor": "<p>Reflexive",
+      "severity": "warn",
+      "note": "An <ol> may only contain <li>; the first item is a bare <p>."
+    },
+    {
+      "label": "dangling-xref",
+      "check_id": "pretext_structure",
+      "line": 15,
+      "anchor": "ref=\"thm-partial-order\"",
+      "severity": "warn",
+      "note": "The xref target thm-partial-order does not exist in the document."
+    },
+    {
+      "label": "figure-inside-p",
+      "check_id": "pretext_structure",
+      "line": 19,
+      "end_line": 22,
+      "anchor": "<figure xml:id=\"fig-venn\">",
+      "severity": "warn",
+      "note": "A <figure> is a block and must not sit inside a <p>."
+    }
+  ]
+}

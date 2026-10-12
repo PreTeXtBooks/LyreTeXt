@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section xml:id="sec-clean">
+  <title>Linear functions</title>
+  <p>
+    A function <m>f</m> is <term>linear</term> when <m>f(x) = mx + b</m>
+    for constants <m>m</m> and <m>b</m>.
+  </p>
+  <definition xml:id="def-slope">
+    <statement>
+      <p>
+        The <term>slope</term> of the line through <m>(x_1, y_1)</m> and
+        <m>(x_2, y_2)</m> is
+        <me>m = \frac{y_2 - y_1}{x_2 - x_1}</me>.
+      </p>
+    </statement>
+  </definition>
+  <p>
+    By <xref ref="def-slope"/>, the slope of <m>y = 3x + 1</m> is <m>3</m>.
+  </p>
+</section>

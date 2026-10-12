@@ -1,0 +1,5 @@
+{
+  "description": "Valid PreTeXt with nothing to report. A pure false-positive probe: every finding any check produces here is a false positive. Note the <me> inside <p> on line 13 — that is correct PreTeXt (display math belongs inside a paragraph), and a check that asks for it to be lifted out is wrong.",
+  "checks": null,
+  "expected": []
+}

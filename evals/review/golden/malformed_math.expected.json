@@ -1,0 +1,14 @@
+{
+  "description": "An unescaped '<' inside <m> — the damage an editing agent does when it 'resolves' &lt; back to '<'. Scoped to xml_wellformed, the deterministic check, so this fixture's metrics are genuine in both recorded and live mode.",
+  "checks": ["xml_wellformed"],
+  "expected": [
+    {
+      "label": "unescaped-lt-in-math",
+      "check_id": "xml_wellformed",
+      "line": 5,
+      "anchor": "<m>0 < x</m>",
+      "severity": "error",
+      "note": "'<' inside <m> must be written &lt;."
+    }
+  ]
+}

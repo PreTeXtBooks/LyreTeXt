@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section xml:id="sec-bare-math">
+  <title>Quadratics</title>
+  <p>
+    The graph of $y = x^2$ is a parabola.
+  </p>
+  <p>
+    Its vertex form is
+    $$y = a(x - h)^2 + k$$
+    where <m>(h, k)</m> is the vertex.
+  </p>
+  <p>
+    The roots are \(x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}\).
+  </p>
+  <p>
+    The discriminant b^2 - 4ac decides how many real roots there are.
+  </p>
+</section>
