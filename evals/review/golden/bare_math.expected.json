@@ -1,0 +1,38 @@
+{
+  "description": "Math left as LaTeX delimiters or plain text instead of PreTeXt math markup — the core of what math_notation exists to catch. Line 16 (unmarked math in prose) is the hardest of the four and the likeliest false negative.",
+  "checks": null,
+  "expected": [
+    {
+      "label": "bare-inline-dollar",
+      "check_id": "math_notation",
+      "line": 5,
+      "anchor": "$y = x^2$",
+      "severity": "warn",
+      "note": "Inline math in $...$ should be <m>...</m>."
+    },
+    {
+      "label": "bare-display-dollars",
+      "check_id": "math_notation",
+      "line": 9,
+      "anchor": "$$y = a(x - h)^2 + k$$",
+      "severity": "warn",
+      "note": "Display math in $$...$$ should be <me>...</me>."
+    },
+    {
+      "label": "bare-inline-paren",
+      "check_id": "math_notation",
+      "line": 13,
+      "anchor": "\\(x = ",
+      "severity": "warn",
+      "note": "Inline math in \\(...\\) should be <m>...</m>."
+    },
+    {
+      "label": "unmarked-math-in-prose",
+      "check_id": "math_notation",
+      "line": 16,
+      "anchor": "b^2 - 4ac",
+      "severity": "warn",
+      "note": "The expression b^2 - 4ac is mathematics written as plain text; it should be <m>b^2 - 4ac</m>."
+    }
+  ]
+}
