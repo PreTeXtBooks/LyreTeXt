@@ -1,0 +1,47 @@
+{
+  "prompt_version": "b400d85fc6e0",
+  "recorded_at": "2026-10-12T08:29:50+00:00",
+  "provider": "gemini",
+  "model": "gemini-3.1-flash-lite",
+  "responses": {
+    "math_notation": [
+      {
+        "severity": "warn",
+        "line": 5,
+        "end_line": null,
+        "message": "Inline math should be wrapped in <m> tags instead of $ symbols.",
+        "suggestion": "<m>y = x^2</m>"
+      },
+      {
+        "severity": "warn",
+        "line": 9,
+        "end_line": null,
+        "message": "Display math should be wrapped in <me> tags instead of $$ symbols.",
+        "suggestion": "<me>y = a(x - h)^2 + k</me>"
+      },
+      {
+        "severity": "warn",
+        "line": 13,
+        "end_line": null,
+        "message": "Inline math should be wrapped in <m> tags instead of \\(...) symbols.",
+        "suggestion": "<m>x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}</m>"
+      },
+      {
+        "severity": "warn",
+        "line": 16,
+        "end_line": null,
+        "message": "Mathematical expression 'b^2 - 4ac' is written as plain text.",
+        "suggestion": "<m>b^2 - 4ac</m>"
+      }
+    ],
+    "pretext_structure": [
+      {
+        "severity": "warn",
+        "line": 7,
+        "end_line": null,
+        "message": "The <p> element contains a block-level element display math $$ which is not allowed inside a paragraph.",
+        "suggestion": "Close the paragraph before the display math and open a new one after: <p>Its vertex form is</p><p>$$y = a(x - h)^2 + k$$</p><p>where <m>(h, k)</m> is the vertex.</p>"
+      }
+    ]
+  }
+}

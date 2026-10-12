@@ -1,0 +1,47 @@
+{
+  "prompt_version": "b400d85fc6e0",
+  "recorded_at": "2026-10-12T08:29:50+00:00",
+  "provider": "gemini",
+  "model": "gemini-3.1-flash-lite",
+  "responses": {
+    "math_notation": [
+      {
+        "severity": "warn",
+        "line": 11,
+        "end_line": null,
+        "message": "List item content must be enclosed in an <li> tag.",
+        "suggestion": "<li><p>Reflexive: <m>A \\subseteq A</m>.</p></li>"
+      }
+    ],
+    "pretext_structure": [
+      {
+        "severity": "warn",
+        "line": 4,
+        "end_line": null,
+        "message": "<definition> is missing a <statement> child.",
+        "suggestion": "Wrap the content inside <definition> with <statement>...</statement>."
+      },
+      {
+        "severity": "warn",
+        "line": 10,
+        "end_line": null,
+        "message": "<ol> contains a <p> element; it must only contain <li> children.",
+        "suggestion": "Wrap the <p> at line 11 inside <li> tags."
+      },
+      {
+        "severity": "warn",
+        "line": 15,
+        "end_line": null,
+        "message": "The <xref> refers to 'thm-partial-order', which is not defined in this document.",
+        "suggestion": "Add a <theorem xml:id=\"thm-partial-order\">...</theorem> to the document or correct the ref attribute."
+      },
+      {
+        "severity": "warn",
+        "line": 17,
+        "end_line": null,
+        "message": "A <p> element cannot directly contain a <figure> element.",
+        "suggestion": "Move the <figure> element outside of the <p> at line 17."
+      }
+    ]
+  }
+}

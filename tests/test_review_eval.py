@@ -231,6 +231,13 @@ class TestLiveMode:
         assert replayed["metrics"] == live["metrics"]
         assert replayed["warnings"] == []
 
+    def test_a_fixture_with_only_deterministic_checks_records_nothing(self, tmp_path):
+        golden = _write_fixture(tmp_path, checks=["xml_wellformed"], expected=[])
+        with patch("lyretext.review.agents.create_llm") as create_llm:
+            evaluate(golden, mode="live", record=True)
+        create_llm.assert_not_called()
+        assert not (golden / "probe.recorded.json").exists()
+
 
 class TestFixtureValidation:
     def test_an_anchor_off_its_line_is_reported(self, tmp_path):

@@ -29,9 +29,11 @@ at all — those are excluded from the metrics, not counted as misses. Determini
 checks (`xml_wellformed`) always run for real, so their numbers are genuine in
 both modes.
 
-The fixtures are currently **unrecorded**: no `.recorded.json` files have been
-captured yet. Until the first `--mode live --record` run, recorded mode scores
-only the deterministic check.
+The committed recordings are the first live baseline: `gemini-3.1-flash-lite`,
+prompt version `b400d85fc6e0`, recorded 2026-10-12. On that baseline, both
+LLM checks found every expected problem (recall 1.0) and each produced one
+false positive (precision 0.8). Fixtures scoped only to deterministic checks
+(`malformed_math`) have no recording, because there is no model output to store.
 
 ## Fixture format
 

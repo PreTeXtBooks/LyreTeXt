@@ -489,7 +489,9 @@ def evaluate(
                     f"current prompts are {version}; its LLM metrics describe the recording, "
                     f"not the current prompts"
                 )
-        elif record:
+        elif record and recording["responses"]:
+            # A fixture scoped to deterministic checks has nothing a model said,
+            # so there is nothing to record.
             fixture.recording_path.write_text(
                 json.dumps(
                     {"prompt_version": version, "recorded_at": recorded_at, **recording},
