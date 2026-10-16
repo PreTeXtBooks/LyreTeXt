@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import json
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional, Any
 from langchain_core.runnables import RunnableConfig
@@ -13,6 +15,92 @@ from langchain_anthropic import ChatAnthropic
 from google import genai
 import anthropic
 from inferenceswitch import Client
+
+
+# ============================================================================
+# Data directory
+# ============================================================================
+#
+# Where the backend keeps everything it writes: config.yml, the runs database,
+# and the default output/ and temp/ directories. `data_paths()` is the single
+# source of truth for all four — the Settings API, run starts and the
+# checkpointer all ask it, so they can never disagree about which config.yml
+# is in force.
+#
+# Two modes:
+#   * No data dir (the dev workflow, `python -m lyretext` from the repo):
+#     config.yml is the repo-root file next to the package, and the database,
+#     output/ and temp/ are relative to the working directory, as they always
+#     were.
+#   * A data dir (`--data-dir` / LYRETEXT_DATA_DIR — the desktop app passes
+#     one under its per-user app-data folder): everything lives inside it, and
+#     a missing config.yml is seeded from the bundled default. Nothing is ever
+#     written next to the package, which in a packaged app is the read-only,
+#     replaced-on-upgrade install dir.
+
+DATA_DIR_ENV = "LYRETEXT_DATA_DIR"
+
+# The default config.yml shipped with the package (repo root in dev; the
+# bundle root in a frozen build).
+BUNDLED_CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.yml"
+
+RUNS_DB_NAME = "lyretext_runs.db"
+
+
+@dataclass(frozen=True)
+class DataPaths:
+    """Resolved locations of everything the backend writes.
+
+    ``root`` is None in dev mode; then ``runs_db``, ``output_dir`` and
+    ``temp_dir`` are relative paths, resolved against the working directory.
+    """
+    root: Optional[Path]
+    config_file: Path
+    runs_db: Path
+    output_dir: Path
+    temp_dir: Path
+
+    def resolve(self, path: str | Path) -> Path:
+        """Anchor a caller-supplied path: relative paths land in the data dir.
+
+        Absolute paths are returned unchanged. In dev mode relative paths are
+        left relative (i.e. working-directory-relative, as before).
+        """
+        p = Path(path)
+        if self.root is None or p.is_absolute():
+            return p
+        return self.root / p
+
+
+def data_paths() -> DataPaths:
+    """Resolve the data directory contract (see the section comment above).
+
+    With a data dir, also makes sure it exists and holds a config.yml, seeding
+    one from the bundled default on first use. Cheap and idempotent, so callers
+    ask it each time rather than caching a stale answer.
+    """
+    raw = os.environ.get(DATA_DIR_ENV, "").strip()
+    if not raw:
+        return DataPaths(
+            root=None,
+            config_file=BUNDLED_CONFIG_FILE,
+            runs_db=Path(RUNS_DB_NAME),
+            output_dir=Path("output"),
+            temp_dir=Path("temp"),
+        )
+
+    root = Path(raw).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    config_file = root / "config.yml"
+    if not config_file.exists() and BUNDLED_CONFIG_FILE.is_file():
+        shutil.copyfile(BUNDLED_CONFIG_FILE, config_file)
+    return DataPaths(
+        root=root,
+        config_file=config_file,
+        runs_db=root / RUNS_DB_NAME,
+        output_dir=root / "output",
+        temp_dir=root / "temp",
+    )
 
 
 # ============================================================================

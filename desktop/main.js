@@ -17,12 +17,14 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let mainWindow = null;
-  const workDir = path.join(app.getPath('userData'), 'backend');
+  // The backend's writable data dir (--data-dir): config.yml, the runs
+  // database, output/ and temp/. %APPDATA%\LyreTeXt\data on Windows.
+  const dataDir = path.join(app.getPath('userData'), 'data');
   const backend = new Backend({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     mode,
-    workDir,
+    dataDir,
     logFile: path.join(app.getPath('userData'), 'backend.log'),
   });
 

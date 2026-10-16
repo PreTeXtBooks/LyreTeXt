@@ -15,6 +15,12 @@ import yaml
 
 from . import PipelineInterface
 
+# Rscript-location override, set by whoever installed the toolchain (the
+# desktop app). RSCRIPT_EXE is the older, unprefixed name and still honoured.
+# Precedence: rscript_exe kwarg → LYRETEXT_RSCRIPT_EXE → RSCRIPT_EXE → PATH →
+# common Windows install locations.
+RSCRIPT_EXE_ENV = "LYRETEXT_RSCRIPT_EXE"
+
 
 class RmdPipeline(PipelineInterface):
     """Pipeline for R Markdown (.rmd/.Rmd) document format."""
@@ -58,7 +64,7 @@ class RmdPipeline(PipelineInterface):
             output_dir.mkdir(parents=True)
         
         # Find Rscript executable
-        rscript = kwargs.get("rscript_exe") or os.environ.get("RSCRIPT_EXE") or self._find_rscript()
+        rscript = self.resolve_rscript(kwargs.get("rscript_exe"))
         
         markdown_files = {}
         errors = []
@@ -200,6 +206,17 @@ class RmdPipeline(PipelineInterface):
         
         return config
     
+    @classmethod
+    def resolve_rscript(cls, explicit: Optional[str] = None) -> str:
+        """Rscript to run: *explicit* → LYRETEXT_RSCRIPT_EXE → RSCRIPT_EXE →
+        PATH / install-location discovery."""
+        return (
+            explicit
+            or os.environ.get(RSCRIPT_EXE_ENV)
+            or os.environ.get("RSCRIPT_EXE")
+            or cls._find_rscript()
+        )
+
     @staticmethod
     def _find_rscript() -> str:
         """
@@ -225,7 +242,8 @@ class RmdPipeline(PipelineInterface):
             return sorted(candidates)[-1]
         
         raise FileNotFoundError(
-            "Rscript.exe was not found. Add R to PATH or set RSCRIPT_EXE to its full path."
+            "Rscript.exe was not found. Add R to PATH or set LYRETEXT_RSCRIPT_EXE "
+            "to its full path."
         )
 
 

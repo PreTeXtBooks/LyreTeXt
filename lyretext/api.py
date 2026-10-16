@@ -23,6 +23,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
+from .config import data_paths
 from .orchestration.checkpointing import build_checkpointer, ensure_run_id
 from .service import (
     apply_chapter_command,
@@ -150,7 +152,7 @@ _background_tasks: set[asyncio.Task] = set()
 # App
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="LyreTeXt", version="0.1.0", docs_url="/api/docs")
+app = FastAPI(title="LyreTeXt", version=__version__, docs_url="/api/docs")
 
 app.add_middleware(
     CORSMiddleware,
@@ -200,6 +202,16 @@ def root():
 # ---------------------------------------------------------------------------
 # Filesystem helpers
 # ---------------------------------------------------------------------------
+
+@app.get("/api/health")
+def health():
+    """Liveness check for the desktop shell and other supervisors.
+
+    Deliberately touches nothing else — not config.yml, not the runs database —
+    so it answers 200 whenever the server is up, even if those are broken.
+    """
+    return {"status": "ok", "version": __version__}
+
 
 @app.get("/api/browse")
 def browse_folder(initial: str = Query(default="", description="Initial directory to open")):
@@ -963,15 +975,18 @@ async def run_jobs(run_id: str):
 # Settings (config.yml)
 # ---------------------------------------------------------------------------
 
-_CONFIG_FILE = Path(__file__).parent.parent / "config.yml"
+def _config_file() -> Path:
+    """The config.yml in force — the same file runs read (config.data_paths)."""
+    return data_paths().config_file
 
 
 def _read_config_yml() -> dict:
-    if not _CONFIG_FILE.exists():
+    config_file = _config_file()
+    if not config_file.exists():
         return {"global_options": {}, "node_overrides": {}}
     try:
         import yaml
-        with open(_CONFIG_FILE) as f:
+        with open(config_file) as f:
             return yaml.safe_load(f) or {}
     except Exception as exc:
         raise HTTPException(500, f"Failed to read config.yml: {exc}") from exc
@@ -980,7 +995,7 @@ def _read_config_yml() -> dict:
 def _write_config_yml(data: dict) -> None:
     try:
         import yaml
-        with open(_CONFIG_FILE, "w") as f:
+        with open(_config_file(), "w") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
     except Exception as exc:
         raise HTTPException(500, f"Failed to write config.yml: {exc}") from exc

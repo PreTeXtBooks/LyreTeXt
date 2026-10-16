@@ -7,14 +7,16 @@
 # (slow start, and a bootloader parent + Python child per run); onedir starts
 # in-process and is what electron-builder copies into resources/backend.
 #
-# Data paths: lyretext resolves its assets relative to the package
+# Data paths: lyretext resolves its read-only assets relative to the package
 # (Path(__file__).parent.parent / "frontend", ... / "config.yml"). In a frozen
 # onedir build, lyretext's __file__ is <_internal>/lyretext/<mod>.pyc, so
 # bundling these at the _internal root keeps every lookup working unchanged.
+# The bundled config.yml is only the default: the app runs with --data-dir and
+# seeds its own writable copy from it (lyretext.config.data_paths).
 import os
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 HERE = Path(SPECPATH)
 REPO = HERE.parents[1]
@@ -42,6 +44,10 @@ datas = [
 ]
 # Per-stage prompts (lyretext/*/prompts/prompts.md) are package data.
 datas += LYRETEXT_DATA
+# inferenceswitch reads its model_cards.json through importlib.resources, which
+# import analysis does not see. Without it Client() fails on the first real run
+# (mock runs never build one); `lyretext-backend --self-check` catches that.
+datas += collect_data_files("inferenceswitch")
 
 
 def _find_demo_dir() -> Path | None:
@@ -74,6 +80,12 @@ hiddenimports = (
     + collect_submodules("uvicorn")
     # build_checkpointer imports SqliteSaver lazily inside a function.
     + collect_submodules("langgraph.checkpoint.sqlite")
+    # inferenceswitch imports provider SDKs by name at adapter build time
+    # (adapters/base.py require_sdk). lyretext.config imports anthropic and
+    # google.genai statically today, but keep the bundle correct even if that
+    # changes; the adapters themselves are listed for the same reason.
+    + collect_submodules("inferenceswitch")
+    + ["anthropic", "google.genai", "google.genai.types"]
 )
 
 a = Analysis(

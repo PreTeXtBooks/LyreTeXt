@@ -21,7 +21,9 @@ def build_checkpointer(
     Args:
         backend: "memory" (in-process, lost on exit) or "sqlite" (persistent file).
         db_path: Path to the SQLite database file. Only used when backend="sqlite".
-                 Defaults to "lyretext_runs.db" in the working directory.
+                 Defaults to the runs database in the data directory (see
+                 lyretext.config.data_paths) — "lyretext_runs.db" in the
+                 working directory when no data dir is set.
     """
     if backend == "sqlite":
         try:
@@ -31,7 +33,11 @@ def build_checkpointer(
                 "SQLite checkpointer requires langgraph-checkpoint-sqlite. "
                 "Install it with: pip install langgraph-checkpoint-sqlite"
             ) from exc
-        path = db_path or "lyretext_runs.db"
+        if not db_path:
+            from ..config import data_paths
+
+            db_path = str(data_paths().runs_db)
+        path = db_path
         # check_same_thread=False allows SQLite connection to be used across threads.
         # This is necessary for LangGraph's executor which may run in different threads.
         # See: https://docs.python.org/3/library/sqlite3.html#sqlite3.connect

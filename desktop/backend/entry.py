@@ -11,6 +11,8 @@ package:
   instead of lingering as an orphan.
 * Static imports of modules uvicorn only names as strings, so PyInstaller's
   import analysis finds them.
+* `--self-check [--live]`: verify the bundle's dynamically loaded pieces
+  (inferenceswitch's adapters, model cards and provider SDKs) and exit.
 """
 from __future__ import annotations
 
@@ -36,10 +38,57 @@ def _start_parent_watchdog() -> None:
     threading.Thread(target=_watch, name="parent-watchdog", daemon=True).start()
 
 
+def _self_check(live: bool) -> int:
+    """Exercise what PyInstaller's import analysis can miss, then exit.
+
+    `lyretext-backend --self-check` imports the app, loads inferenceswitch's
+    model cards (package data read through importlib.resources) and builds
+    both provider adapters with a dummy key, which imports each provider SDK
+    via importlib (require_sdk). Mock runs never reach any of this, so without
+    the check a bundle missing them only fails on a user's first real run.
+
+    With `--live`, also makes one minimal structured call per provider whose
+    key is set in the environment. The key is never printed.
+    """
+    import lyretext.api  # noqa: F401  (the whole app imports)
+    from inferenceswitch import Client
+    from inferenceswitch.adapters import build_adapter
+
+    from lyretext.config import create_llm
+
+    dummy = "self-check-dummy-key"
+    client = Client(key_provider=lambda spec: dummy)
+    print(f"ok model cards: {len(list(client.cards))} (updated {client.cards.updated})")
+    for name in ("anthropic", "gemini"):
+        adapter = build_adapter(client.registry.get(name), dummy)
+        sdk = type(adapter.raw_client)
+        print(f"ok {name}: {type(adapter).__name__} -> {sdk.__module__}.{sdk.__qualname__}")
+
+    if live:
+        schema = {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+        }
+        for name, key_env in (("gemini", "GEMINI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
+            if not os.environ.get(key_env):
+                print(f"skip live {name}: {key_env} not set")
+                continue
+            llm = create_llm(name)
+            result = llm.with_structured_output(schema).invoke(
+                ["Reply with the single word 'pong' as the answer."]
+            )
+            print(f"ok live {name} ({llm.model}): {result!r}")
+    return 0
+
+
 def main() -> None:
     if not getattr(sys, "frozen", False):
         # Dev mode: make the repo's lyretext package importable.
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+    if "--self-check" in sys.argv[1:]:
+        sys.exit(_self_check(live="--live" in sys.argv[1:]))
 
     _start_parent_watchdog()
 
