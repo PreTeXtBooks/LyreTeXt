@@ -23,6 +23,7 @@ from typing import Any, Callable, Iterable
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
+from .config import data_paths
 from .orchestration.checkpointing import (
     build_checkpointer,
     build_checkpoint_config,
@@ -49,12 +50,27 @@ from .viewmodel import build_run_summary, build_view_model, load_chapter_finding
 
 logger = logging.getLogger("lyretext.service")
 
-_DEFAULT_CONFIG_FILE = Path("config.yml")
-
 
 def _config_file() -> Path | None:
-    """Return config.yml path if it exists, else None."""
-    return _DEFAULT_CONFIG_FILE if _DEFAULT_CONFIG_FILE.exists() else None
+    """Return the config.yml in force (see config.data_paths) if it exists.
+
+    The same file the Settings API reads and writes, so a Settings edit is the
+    config the next run uses.
+    """
+    path = data_paths().config_file
+    return path if path.exists() else None
+
+
+def _anchor_dir(path: str) -> str:
+    """Place a relative output/temp dir inside the data dir, when one is set.
+
+    Without a data dir the path is returned untouched (working-directory
+    relative, as before).
+    """
+    paths = data_paths()
+    if paths.root is None:
+        return path
+    return str(paths.resolve(path))
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +90,9 @@ def start_run(
 
     Args:
         source:       path to the project source directory / file.
-        output_dir:   directory where .ptx files will be written.
-        temp_dir:     working directory for intermediate artefacts.
+        output_dir:   directory where .ptx files will be written. A relative
+                      path is placed inside the data dir when one is set.
+        temp_dir:     working directory for intermediate artefacts (likewise).
         run_config:   flat runtime options dict (merged into GlobalRuntimeOptions).
         checkpointer: supply an existing checkpointer; defaults to SQLite.
         run_id:       stable run identifier; generated if omitted.
@@ -87,8 +104,8 @@ def start_run(
     rid = ensure_run_id(run_id)
     initial_state: dict[str, Any] = {
         "project_source": source,
-        "temp_dir": temp_dir,
-        "output_dir": output_dir,
+        "temp_dir": _anchor_dir(temp_dir),
+        "output_dir": _anchor_dir(output_dir),
     }
     result = invoke_workflow_graph(
         initial_state,

@@ -10,6 +10,11 @@ pandoc-pretext writer installed in pandoc's user data directory under
 Follows the same conventions as ``lyretext.pipeline.rmd``: executable discovery
 via env var → PATH → platform install globs, and a non-raising return shape so
 compilation errors are data rather than exceptions.
+
+Both tool locations can be injected, which is how the desktop app points at a
+bundled toolchain: ``LYRETEXT_PANDOC_EXE`` for pandoc and
+``LYRETEXT_PANDOC_WRITER`` for the pretext.lua writer (see ``find_pandoc`` and
+``resolve_writer`` for precedence).
 """
 from __future__ import annotations
 
@@ -27,6 +32,11 @@ DEFAULT_WRITER = "pretext.lua"
 
 DEFAULT_TIMEOUT = 120
 
+# Tool-location overrides, set by whoever installed the toolchain (the desktop
+# app). PANDOC_EXE is the older, unprefixed name and still honoured.
+PANDOC_EXE_ENV = "LYRETEXT_PANDOC_EXE"
+PANDOC_WRITER_ENV = "LYRETEXT_PANDOC_WRITER"
+
 
 class PandocNotFoundError(FileNotFoundError):
     """Raised when no pandoc executable can be located."""
@@ -35,13 +45,18 @@ class PandocNotFoundError(FileNotFoundError):
 def find_pandoc(explicit: str | None = None) -> str:
     """Locate the pandoc executable.
 
-    Precedence: *explicit* argument → ``PANDOC_EXE`` env var → PATH → common
-    Windows install locations.
+    Precedence: *explicit* argument (the ``pandoc_exe`` config option) →
+    ``LYRETEXT_PANDOC_EXE`` → ``PANDOC_EXE`` → PATH → common Windows install
+    locations.
 
     Raises:
         PandocNotFoundError: if pandoc cannot be found anywhere.
     """
-    candidate = explicit or os.environ.get("PANDOC_EXE")
+    candidate = (
+        explicit
+        or os.environ.get(PANDOC_EXE_ENV)
+        or os.environ.get("PANDOC_EXE")
+    )
     if candidate:
         return candidate
 
@@ -66,9 +81,23 @@ def find_pandoc(explicit: str | None = None) -> str:
 
     raise PandocNotFoundError(
         "pandoc was not found. Install it from https://pandoc.org/installing.html, "
-        "add it to PATH, or set PANDOC_EXE (or the 'pandoc_exe' config option) "
-        "to its full path."
+        "add it to PATH, or set LYRETEXT_PANDOC_EXE (or the 'pandoc_exe' config "
+        "option) to its full path."
     )
+
+
+def resolve_writer(writer: str | None = DEFAULT_WRITER) -> str:
+    """Return the custom writer to pass to pandoc's ``-t``.
+
+    The bare default name ("pretext.lua", or None) means "the pretext writer,
+    wherever it is installed": pandoc looks it up in the CWD and then its user
+    data dir. ``LYRETEXT_PANDOC_WRITER`` names a specific installed copy and
+    takes over that lookup. Any other value — a path or a different writer a
+    user configured on purpose — is used as given.
+    """
+    if writer in (None, "", DEFAULT_WRITER):
+        return os.environ.get(PANDOC_WRITER_ENV) or DEFAULT_WRITER
+    return writer
 
 
 def convert_markdown_to_pretext(
@@ -85,7 +114,8 @@ def convert_markdown_to_pretext(
     Args:
         source_path: Path to the Markdown source file.
         pandoc_exe: Explicit pandoc path; auto-discovered when None.
-        writer: Custom writer to pass to ``-t``. Defaults to "pretext.lua".
+        writer: Custom writer to pass to ``-t``. Defaults to "pretext.lua";
+            see ``resolve_writer`` for how the default is located.
         extra_args: Additional pandoc arguments (e.g. ``("--lua-filter", ...)``).
         timeout: Seconds before the subprocess is killed.
         cwd: Working directory for the pandoc subprocess. Needed for LaTeX
@@ -109,7 +139,7 @@ def convert_markdown_to_pretext(
     # No -o: pandoc writes to stdout by default, which avoids a temp file.
     # No -s: chapters are fragments, and pretext.lua already emits a rooted
     # <section> element.
-    cmd = [exe, str(source), "-t", writer, *extra_args]
+    cmd = [exe, str(source), "-t", resolve_writer(writer), *extra_args]
 
     try:
         result = subprocess.run(
@@ -150,4 +180,5 @@ __all__ = [
     "PandocNotFoundError",
     "convert_markdown_to_pretext",
     "find_pandoc",
+    "resolve_writer",
 ]
