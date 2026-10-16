@@ -72,13 +72,27 @@ if (!app.requestSingleInstanceLock()) {
       title: 'LyreTeXt',
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
-    // Links off the local backend open in the user's browser, not in the app.
+    // Only the local backend's origin loads in the app. Other http(s) links
+    // open in the user's browser; any other scheme (file:, javascript:, ...)
+    // is dropped. Compare whole origins: a prefix test would let port 5000
+    // match http://127.0.0.1:50001.
+    const isAppUrl = (url) => {
+      try { return new URL(url).origin === baseUrl; } catch { return false; }
+    };
+    const openExternalSafe = (url) => {
+      let protocol;
+      try { protocol = new URL(url).protocol; } catch { return; }
+      if (protocol === 'http:' || protocol === 'https:') shell.openExternal(url);
+    };
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (!url.startsWith(baseUrl)) {
-        shell.openExternal(url);
-        return { action: 'deny' };
-      }
-      return { action: 'allow' };
+      if (isAppUrl(url)) return { action: 'allow' };
+      openExternalSafe(url);
+      return { action: 'deny' };
+    });
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      if (isAppUrl(url)) return;
+      event.preventDefault();
+      openExternalSafe(url);
     });
     mainWindow.on('closed', () => { mainWindow = null; });
     await mainWindow.loadURL(`${baseUrl}/ui/`);
