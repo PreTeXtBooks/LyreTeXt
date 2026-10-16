@@ -1,0 +1,8 @@
+node_modules/
+# PyInstaller
+build/
+dist/
+# electron-builder
+release/
+# The root .gitignore ignores *.spec (PyInstaller default); this one is source.
+!backend/lyretext-backend.spec
