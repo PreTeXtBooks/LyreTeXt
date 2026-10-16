@@ -12,6 +12,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
 from google import genai
 import anthropic
+from inferenceswitch import Client
 
 
 # ============================================================================
@@ -303,16 +304,143 @@ def get_resolved_config(
 
 
 # ============================================================================
-# LLM Configuration (existing)
+# LLM Configuration
 # ============================================================================
+#
+# Dispatch goes through inferenceswitch (decision #61). `create_llm` returns a
+# thin adapter that keeps the call sites' existing contract —
+#
+#     create_llm(provider).with_structured_output(json_schema).invoke(messages)
+#
+# returning the parsed structured-output dict — while the actual provider call is
+# made by `inferenceswitch.Client.generate_structured_json`. Two things the
+# adapter must preserve, because the review eval harness
+# (lyretext/review/evaluation.py) and the test suite bind to them:
+#   * `create_llm(provider)` returns an object exposing `.model`, and
+#   * `.with_structured_output(schema).invoke(messages)` returns a dict.
+#
+# inferenceswitch has no file-input support yet, so the execution_mode="upload"
+# path (multimodal file references built in read/agents.py) still needs
+# LangChain. The adapter detects file parts in the message content and falls
+# back to the LangChain model for exactly those calls. Phase 2 (once
+# inferenceswitch gains file inputs) migrates call sites to the native API and
+# drops LangChain — see decision #61.
 
-def create_llm(model_type: str = "gemini", **options):
+# Per-provider default model: env var name and the fallback default. Kept
+# identical to the previous LangChain factories for behaviour equivalence.
+_PROVIDER_MODEL_ENV: dict[str, tuple[str, str]] = {
+    "gemini": ("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+    "anthropic": ("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+}
+
+# Structured output is more reliable at a low temperature; adopt inferenceswitch
+# convention here (decision #61). The previous LangChain path used each
+# provider's default (~1.0).
+_STRUCTURED_TEMPERATURE = 0.1
+
+_client: Client | None = None
+
+
+def _get_client() -> Client:
+    """Lazily build the shared inferenceswitch client (reads keys from env)."""
+    global _client
+    if _client is None:
+        load_dotenv()
+        _client = Client()
+    return _client
+
+
+def _default_model(provider: str) -> str:
+    try:
+        env_name, default = _PROVIDER_MODEL_ENV[provider]
+    except KeyError:
+        raise ValueError(f"Unsupported model type: {provider}")
+    return os.getenv(env_name, default)
+
+
+def _flatten_content(messages: list[Any]) -> tuple[str, bool]:
+    """Join the text parts of LangChain-style messages into one prompt string.
+
+    Returns ``(prompt, has_non_text_parts)``. File (and any other non-text)
+    parts — the execution_mode="upload" path — cannot go through
+    inferenceswitch's text API, so the caller falls back to LangChain when the
+    flag is True.
+    """
+    texts: list[str] = []
+    has_non_text = False
+    for message in messages:
+        content = getattr(message, "content", message)
+        if isinstance(content, str):
+            if content:
+                texts.append(content)
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        texts.append(part.get("text", ""))
+                    else:
+                        # file / image / anything non-text — defer to LangChain.
+                        has_non_text = True
+                elif isinstance(part, str):
+                    texts.append(part)
+    return "\n\n".join(t for t in texts if t), has_non_text
+
+
+class _StructuredLLM:
+    """Adapter preserving the ``create_llm(...).with_structured_output(schema)
+    .invoke(messages) -> dict`` contract, backed by inferenceswitch for text
+    prompts and by LangChain for the file-upload path."""
+
+    def __init__(self, provider: str, model: str, schema: dict | None = None):
+        self.provider = provider
+        self.model = model
+        self._schema = schema
+
+    def with_structured_output(self, schema: Any) -> "_StructuredLLM":
+        return _StructuredLLM(self.provider, self.model, schema)
+
+    def invoke(self, messages: list[Any]) -> Any:
+        if self._schema is None:
+            raise ValueError(
+                "call with_structured_output(schema) before invoke()"
+            )
+        prompt, has_non_text = _flatten_content(messages)
+        if has_non_text:
+            # Upload mode: inferenceswitch can't carry file references yet, so
+            # this call keeps the LangChain path (decision #61, Phase 2).
+            fallback = _create_langchain_llm(self.provider).with_structured_output(
+                self._schema
+            )
+            return fallback.invoke(messages)
+        return _get_client().generate_structured_json(
+            model=self.model,
+            provider=self.provider,
+            schema=self._schema,
+            prompt=prompt,
+            temperature=_STRUCTURED_TEMPERATURE,
+        )
+
+
+def create_llm(model_type: str = "gemini", **options) -> _StructuredLLM:
+    """Build the structured-output LLM adapter for *model_type*.
+
+    *model_type* is a provider name ("gemini" | "anthropic"). ``options`` is
+    accepted for signature compatibility but is not forwarded on the
+    inferenceswitch path (no call site passes any today).
+    """
+    return _StructuredLLM(model_type, _default_model(model_type))
+
+
+def _create_langchain_llm(model_type: str = "gemini", **options):
+    """LangChain model, used only for the file-upload fallback in `invoke`."""
     if model_type == "gemini":
         return create_gemini_llm(**options)
     elif model_type == "anthropic":
         return create_anthropic_llm(**options)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
+
 
 def create_gemini_llm(**options) -> ChatGoogleGenerativeAI:
     load_dotenv()
@@ -331,7 +459,7 @@ def create_anthropic_llm(**options) -> ChatAnthropic:
 
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY is required to initialize Anthropic.")
-    
+
     return ChatAnthropic(model=model_name, anthropic_api_key=api_key, **options)
 
 def initialise_client(model_type: str = "gemini", **options):

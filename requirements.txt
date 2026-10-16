@@ -1,5 +1,9 @@
 langgraph>=0.2.0
 langgraph-checkpoint-sqlite>=1.0.0
+# inferenceswitch is the LLM dispatch layer (decision #61). The langchain
+# model packages below remain Phase-1 only as the execution_mode="upload"
+# backend (inferenceswitch has no file-input support yet); Phase 2 removes them.
+inferenceswitch[anthropic,gemini]>=0.6.0
 langchain>=0.2.0
 langchain-google-genai>=1.0.7
 langchain-anthropic>=0.2.0
