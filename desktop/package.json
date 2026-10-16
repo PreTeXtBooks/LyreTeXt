@@ -1,0 +1,42 @@
+{
+  "name": "lyretext-desktop",
+  "productName": "LyreTeXt",
+  "version": "0.0.1-spike",
+  "description": "LyreTeXt desktop shell: Electron window over the Python backend sidecar (Phase 0 spike, #68)",
+  "main": "main.js",
+  "private": true,
+  "license": "SEE LICENSE IN ../LICENSE",
+  "scripts": {
+    "start": "electron .",
+    "start:frozen": "electron . --backend=frozen",
+    "freeze": "python backend/freeze.py",
+    "pack": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "org.pretextbooks.lyretext",
+    "productName": "LyreTeXt",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "backend-process.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/lyretext-backend",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": "dir"
+    }
+  }
+}

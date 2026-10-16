@@ -1,0 +1,6 @@
+node_modules/
+# PyInstaller
+build/
+dist/
+# electron-builder
+release/
