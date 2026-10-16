@@ -53,6 +53,7 @@ same hub file concurrently; new files essentially never conflict.
 | `lyretext/read/` `convert/` `translate/` `enhance/` `format/` `render/` `review/` `edit/` | Per-stage agent/tool packages; **structure varies by stage** — agentic stages (`read`, `translate`, `enhance`, `review`) carry `agents.py`/`graph.py`/`state.py`/`structure.py`/`prompts/`, while others are plain modules (`convert/`: `pandoc.py`, `split.py`; `format/`: `pretext_fmt.py`, `repair.py`; `render/`: `pretext_html.py`; `edit/`: `agents.py` + `prompts/`). Stage-local, not hubs. |
 | `lyretext/prompts/`, `lyretext/utils/` | Shared prompt(s) and utilities (`filesystem`, `prompts`, `text`). |
 | `frontend/` | Web UI: `index.html`, `app.js`, `api-client.js` **hub**, `styles.css`, `assets/`. |
+| `desktop/` | Electron desktop shell (`W1-DESK`, in progress): main process, packaging/installer config. New; not a hub. |
 | `tests/` | Test suite. |
 | `docs/` | **Local, not tracked** (gitignored). Design + experiment writeups (`architecture/`, `experiments/`), kept private for now — not shared state. |
 | `development/` | **Local, not tracked** (gitignored). Working design notes, issue drafts, and UI mocks — scratch, private, not authoritative. |
@@ -64,7 +65,7 @@ same hub file concurrently; new files essentially never conflict.
 
 ## Streams
 
-Four streams, cut so two rarely touch the same hub file. The cut is about conflict surface
+Five streams, cut so two rarely touch the same hub file. The cut is about conflict surface
 and is provisional — revise it if the real contention shows up elsewhere.
 
 | Stream | Issue prefix | Concern |
@@ -73,6 +74,7 @@ and is provisional — revise it if the real contention shows up elsewhere.
 | Orchestration | `ORCH` | `orchestration/*` — the graph, checkpointing, HITL workflow fabric, shared run state. |
 | Frontend | `UI` | `frontend/*`. |
 | Core / Platform | `CORE` | `config.py`, `api.py`, `service.py`, `cli.py`, `viewmodel.py` — the shared service/API/CLI surface, isolated so it serialises. |
+| Desktop distribution | `DESK` | `desktop/` (Electron shell), backend freezing, bundled toolchain, installers and release CI. Backend changes it needs are filed as `CORE`-stream tasks in its milestone. |
 
 ## Repo-specific bindings
 
@@ -119,12 +121,28 @@ tiers and never decide-close-and-flag `unreviewed` on their own initiative. `unr
 therefore only arises from in-session `[IMPL]` calls the maintainer is shown in the batch
 summary — the same as any interactive session.
 
+### Delegated authority: desktop distribution (`W1-DESK`)
+*Overrides the subagent rules above for `W1-DESK` work only. Granted by George, 2026-10-16.*
+
+For the Electron desktop-distribution work — issues in the `W1-DESK` milestone and nothing
+else — George has delegated the maintainer's role to the orchestrating Claude session:
+
+- **It launches and directs subagents** for `W1-DESK` tasks itself (no chip click needed) and
+  approves their plans in George's place; it may pre-approve a scoped plan in the brief.
+- **It makes the decisions** for this work and records every one as a decision issue under
+  Part 2. A decision made without George is recorded `Mode: auto`, closed, and labelled
+  **`unreviewed`** so George can review it afterwards; only George clears that label.
+  `[DESIGN]`-tier questions are still opened and left for George — never closed by an agent.
+- **It tests and reviews** `W1-DESK` PRs, and may merge them once they pass.
+- **Unchanged:** the main session still never authors source code — subagents do. Anything
+  outside `W1-DESK` (including #61/#62, which `W1-DESK` depends on) follows the rules above.
+
 ---
 
 ## Migration status
 
 **Adoption is phased. Phases 0–2 are done — the task/claim *mechanics* (milestones/waves,
-issue-as-lock) are now in force: the active, claimable set is Wave 1 (`W1-UI`, `W1-PIPE`),
+issue-as-lock) are now in force: the active, claimable set is Wave 1 (`W1-UI`, `W1-PIPE`, `W1-CORE`, `W1-DESK`),
 and everything in Wave 2 is recorded backlog until Wave 1 closes (see `ROADMAP.md`). Phase 3
 remains deferred.** Design intent lives in local, untracked notes (`development/`, `docs/`);
 treat those as private working material, not shared state. Do not silently work around this
@@ -145,7 +163,8 @@ list — if a task needs something on it, that need is the reason to do the setu
 **Phase 2 — roadmap + milestones (done)**
 - [x] Roadmap written (`ROADMAP.md`) and named in the bindings table above.
 - [x] Milestones created: `W1-UI`, `W1-PIPE` (active) and `W2-PIPE`, `W2-ORCH`, `W2-CORE`
-      (backlog).
+      (backlog). Added later in Wave 1: `W1-CORE` (inferenceswitch, #62) and `W1-DESK`
+      (desktop distribution, #63).
 - [x] Backlog issues #13–#21, #24–#25 converted to claimable `task`s on their milestones
       (the `backlog` label is now unused).
 
