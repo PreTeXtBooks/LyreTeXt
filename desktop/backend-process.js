@@ -9,7 +9,9 @@ const net = require('net');
 const path = require('path');
 
 const HOST = '127.0.0.1';
-const HEALTH_PATH = '/api/settings';
+// Answers 200 as soon as the server is up; unlike /api/settings it never
+// parses config.yml, so a broken config can't masquerade as a failed start.
+const HEALTH_PATH = '/api/health';
 
 // Ask the OS for a free port by binding to port 0. There is a small window
 // between closing this probe and the backend binding the port; acceptable for
@@ -85,9 +87,9 @@ async function waitForHealthy(baseUrl, child, { timeoutMs = 60000, intervalMs = 
 }
 
 class Backend {
-  constructor({ isPackaged, resourcesPath, mode, workDir, logFile }) {
+  constructor({ isPackaged, resourcesPath, mode, dataDir, logFile }) {
     this.opts = { isPackaged, resourcesPath, mode };
-    this.workDir = workDir;
+    this.dataDir = dataDir;
     this.logFile = logFile;
     this.child = null;
     this.port = null;
@@ -101,14 +103,25 @@ class Backend {
   async start() {
     this.port = await getFreePort();
     const { cmd, args } = resolveBackendCommand(this.opts);
-    fs.mkdirSync(this.workDir, { recursive: true });
+    fs.mkdirSync(this.dataDir, { recursive: true });
     const log = fs.openSync(this.logFile, 'a');
-    fs.writeSync(log, `\n--- ${new Date().toISOString()} starting ${cmd} ${args.join(' ')} on port ${this.port}\n`);
+    fs.writeSync(log, `\n--- ${new Date().toISOString()} starting ${cmd} ${args.join(' ')} on port ${this.port}, data dir ${this.dataDir}\n`);
 
-    this.child = spawn(cmd, [...args, '--host', HOST, '--port', String(this.port)], {
-      // The backend writes lyretext_runs.db, output/ and temp/ relative to its
-      // cwd, so give it a writable per-user directory rather than the install dir.
-      cwd: this.workDir,
+    const backendArgs = [
+      ...args,
+      '--host', HOST,
+      '--port', String(this.port),
+      // Everything the backend writes (config.yml, lyretext_runs.db, output/,
+      // temp/) goes here, never into the read-only, replaced-on-upgrade
+      // install dir. A missing config.yml is seeded from the bundled default.
+      '--data-dir', this.dataDir,
+    ];
+    this.child = spawn(cmd, backendArgs, {
+      // The backend itself no longer depends on its cwd, but the tools it runs
+      // inherit it (knitr writes figures relative to R's working directory),
+      // so start it somewhere writable rather than wherever Electron was
+      // launched from.
+      cwd: this.dataDir,
       env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
       // stdin is a pipe the backend's watchdog reads: if this process dies
       // without running its exit handlers, the pipe closes and the backend exits.
