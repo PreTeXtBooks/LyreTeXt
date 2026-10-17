@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'">
+<title>Starting LyreTeXt</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; background: #fcfcfc; color: #1d2b3a;
+    font: 15px/1.4 "Segoe UI", system-ui, sans-serif; user-select: none; -webkit-app-region: drag;
+  }
+  img { width: 88px; height: 88px; }
+  .title { font-size: 17px; font-weight: 600; }
+  .note { font-size: 12.5px; color: #5b6673; text-align: center; max-width: 300px; }
+  .bar { width: 160px; height: 3px; border-radius: 2px; background: #e4e7eb; overflow: hidden; }
+  .bar::after {
+    content: ""; display: block; width: 40%; height: 100%; background: #e8742c;
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+</style>
+</head>
+<body>
+  <img src="assets/icon.png" alt="">
+  <div class="title">Starting LyreTeXt…</div>
+  <div class="bar" role="progressbar" aria-label="Starting"></div>
+  <div class="note">The first launch after installing can take up to a minute while Windows checks the app.</div>
+</body>
+</html>

@@ -5,7 +5,15 @@
     "verifiedVersion": "3.10.1",
     "license": "GPL-2.0-or-later",
     "homepage": "https://pandoc.org",
-    "source": "https://github.com/jgm/pandoc"
+    "source": "https://github.com/jgm/pandoc",
+    "$comment-ci": "CI (#71, .github/workflows/desktop.yml) downloads windowsZip and verifies its sha256 (GitHub's own asset digest for the 3.10.1 release); a release attaches sourceTarball after checking the tag still points at sourceCommit.",
+    "windowsZip": {
+      "url": "https://github.com/jgm/pandoc/releases/download/3.10.1/pandoc-3.10.1-windows-x86_64.zip",
+      "sha256": "4725a1883e2171c2e181e6fd45003acb59ca4e9cbe031fdd3b79ef0d697d36aa"
+    },
+    "sourceTag": "3.10.1",
+    "sourceCommit": "d6011e4465d4cb0d0a6fb872dab3ed089f404a75",
+    "sourceTarball": "https://github.com/jgm/pandoc/archive/refs/tags/3.10.1.tar.gz"
   },
   "pandocPretext": {
     "description": "Oscar Levin's pandoc custom writer for PreTeXt (pretext.lua) and its shared environment table",

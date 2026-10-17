@@ -1,0 +1,11 @@
+<section xml:id="sec-measuring-spread">
+    <title>Measuring Spread</title>
+    <p>
+        The sample variance is
+        <m>s^2 = \frac{1}{n-1}\sum_{i=1}^{n} (x_i - \bar{x})^2</m>.
+    </p>
+    <ul>
+        <li><p>The <term>range</term> is the largest value minus the smallest.</p></li>
+        <li><p>The <term>standard deviation</term> is the square root of the variance.</p></li>
+    </ul>
+</section>

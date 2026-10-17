@@ -8,8 +8,12 @@ Activate by setting the environment variable before starting the server:
     $env:LYRETEXT_MOCK = "1"
     python -m lyretext --reload
 
-The mock always uses the demo chapter set from demo/example_output regardless
-of the source path supplied by the UI.
+The mock always replays the same seven-chapter book, regardless of the source
+path supplied by the UI. It reads it from the repo-root demo/ (gitignored,
+local only) when that exists, and otherwise from the small tracked fixture in
+mock_fixture/ next to this module. The fixture is package data, so it also
+ships in the frozen desktop backend: a clean checkout, a CI runner and an
+installed app can all run LYRETEXT_MOCK=1 (#71).
 """
 from __future__ import annotations
 
@@ -32,15 +36,26 @@ from .validation import default_validation_summary, evaluate_stage_transition
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_DEMO_TEMP = _REPO_ROOT / "demo" / "temp_output"
-_DEMO_OUTPUT = _REPO_ROOT / "demo" / "example_output"
+_DEMO_DIR = _REPO_ROOT / "demo"
+_FIXTURE_DIR = Path(__file__).parent / "mock_fixture"
 
-# Canonical chapter list matching demo/example_output
+
+def _mock_source_dirs() -> tuple[Path, Path]:
+    """(markdown dir, pre-translated .ptx dir) the mock replays.
+
+    The local demo/ wins when present, so a developer's existing mock setup is
+    unchanged; otherwise the tracked fixture. Resolved per call, not at import.
+    """
+    root = _DEMO_DIR if (_DEMO_DIR / "example_output").is_dir() else _FIXTURE_DIR
+    return root / "temp_output", root / "example_output"
+
+
+# Canonical chapter list; file stems in demo/ and mock_fixture/.
 _MOCK_CHAPTERS = [
     {"id": "fm-foreword",               "name": "Foreword",          "type": "frontmatter"},
     {"id": "fm-preface",                "name": "Preface",           "type": "frontmatter"},
     {"id": "chapter-1-introduction",    "name": "Introduction",      "type": "chapter"},
-    {"id": "chapter-2-central-tendancy","name": "Central Tendency",  "type": "chapter"},
+    {"id": "chapter-2-central-tendency","name": "Central Tendency",  "type": "chapter"},
     {"id": "chapter-3-measuring-spread","name": "Measuring Spread",  "type": "chapter"},
     {"id": "app-appendix",              "name": "Appendix",          "type": "appendix"},
     {"id": "bm-references",             "name": "References",        "type": "backmatter"},
@@ -55,9 +70,10 @@ def _mock_process_to_markdown(state: SkeletonState) -> dict[str, Any]:
     time.sleep(0.4)
     temp_dir = Path(state.get("temp_dir", "temp"))
     temp_dir.mkdir(parents=True, exist_ok=True)
+    md_dir, _ = _mock_source_dirs()
 
     for ch in _MOCK_CHAPTERS:
-        src = _DEMO_TEMP / f"{ch['id']}.md"
+        src = md_dir / f"{ch['id']}.md"
         dst = temp_dir / f"{ch['id']}.md"
         if src.exists():
             shutil.copy2(src, dst)
@@ -102,11 +118,12 @@ def build_mock_skeleton_graph():
 # ---------------------------------------------------------------------------
 
 def _mock_translate(state: ChapterTranslation) -> dict[str, Any]:
-    """Skip LLM translate/review; copy pre-translated .ptx from demo/example_output."""
+    """Skip LLM translate/review; copy the pre-translated .ptx (see _mock_source_dirs)."""
     time.sleep(0.4)
     output_path = Path(state["output_path"])
     ch_id = output_path.stem
-    src_ptx = _DEMO_OUTPUT / f"{ch_id}.ptx"
+    _, ptx_dir = _mock_source_dirs()
+    src_ptx = ptx_dir / f"{ch_id}.ptx"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if src_ptx.exists():

@@ -8,6 +8,7 @@
 //   --pandoc <pandoc.exe>    or LYRETEXT_TOOLCHAIN_PANDOC      default: pandoc on PATH
 //   --writer-dir <dir>       or LYRETEXT_TOOLCHAIN_WRITER_DIR  default: <pandoc user data dir>/custom
 //   --out <dir>                                                default: dist/toolchain
+//   --strict                 or LYRETEXT_TOOLCHAIN_STRICT=1    fail, not warn, on a pin mismatch
 //
 // The writer dir must hold pretext.lua and pretext-environments.lua (which
 // pretext.lua loads from its own folder); pretext-latex-reader.lua is copied
@@ -37,6 +38,7 @@ const IS_WIN = process.platform === 'win32';
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--strict') { out.strict = true; continue; }
     const m = /^--(pandoc|writer-dir|out)(?:=(.*))?$/.exec(argv[i]);
     if (!m) throw new Error(`Unknown argument ${argv[i]}`);
     out[m[1]] = m[2] !== undefined ? m[2] : argv[++i];
@@ -91,6 +93,13 @@ function copy(src, destDir, name = path.basename(src)) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const out = path.resolve(DESKTOP, args.out || path.join('dist', 'toolchain'));
+  // --strict (CI builds, #71): a copy that differs from the pins is an error,
+  // not a warning, so a release can only ship what toolchain.json verified.
+  const strict = Boolean(args.strict || /^(1|true|yes)$/i.test(process.env.LYRETEXT_TOOLCHAIN_STRICT || ''));
+  const mismatch = (message) => {
+    if (strict) fail(`${message} (--strict)`);
+    console.warn(`stage-toolchain: WARNING ${message}`);
+  };
 
   // -- pandoc ---------------------------------------------------------------
   const pandocSrc = args.pandoc || process.env.LYRETEXT_TOOLCHAIN_PANDOC || which('pandoc');
@@ -105,7 +114,7 @@ function main() {
     fail(`pandoc ${version} is older than the required ${PINS.pandoc.minVersion}`);
   }
   if (version !== PINS.pandoc.verifiedVersion) {
-    console.warn(`stage-toolchain: WARNING pandoc ${version} differs from the verified ${PINS.pandoc.verifiedVersion}`);
+    mismatch(`pandoc ${version} differs from the verified ${PINS.pandoc.verifiedVersion}`);
   }
   const userDataDir = (/^User data directory:\s*(.+?)\s*$/m.exec(probe.stdout) || [])[1];
 
@@ -158,7 +167,7 @@ function main() {
     writerFiles[name] = { gitBlob: blob, sha256: sha256(dest) };
     if (pp.gitBlobs[name] && pp.gitBlobs[name] !== blob) {
       matchesPin = false;
-      console.warn(`stage-toolchain: WARNING ${name} differs from ${pp.source} at ${pp.commit.slice(0, 12)}`);
+      mismatch(`${name} differs from ${pp.source} at ${pp.commit.slice(0, 12)}`);
     }
   }
   const upstreamLicence = path.join(writerDir, 'LICENSE');
