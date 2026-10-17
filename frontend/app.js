@@ -108,6 +108,11 @@ const state = {
   outputContent: null,
 
   settingsDraft: null,
+  // Desktop app only: [{provider, set}] from window.lyretextDesktop (never a
+  // key value), and the last Test result per provider.
+  desktopKeys: null,
+  desktopKeysLoading: false,
+  keyTests: {},
 
   pollTimer: null,
   viewSig: null,   // hash of the last polled view, to skip no-op re-renders
@@ -1919,6 +1924,8 @@ function renderSettings() {
   return `
     ${topbar("Settings", "Defaults applied to new runs of this project.")}
     <div class="content" style="max-width:960px">
+      ${apiKeysCard()}
+
       ${settingsCard("Default model", "Applied to every pipeline node unless overridden below.",
         settingsRow("Model provider", "Default provider for all pipeline nodes.", `
           <select class="select" data-action="settingsField" data-field="global.provider">
@@ -1983,6 +1990,58 @@ function nodeOverrideRow(node, ov) {
     </select>
     <input class="input mono" placeholder="model name" value="${esc(ov?.llm_model || "")}" data-action="settingsField" data-field="node.${node}.llm_model" ${!on ? "disabled" : ""} />
   </div>`;
+}
+
+// API keys. In the desktop app, keys are stored encrypted on this machine by
+// the app itself (window.lyretextDesktop, see desktop/preload.js); this page
+// can save, remove and test them, and sees only whether each one is set. In
+// the browser/dev workflow, the backend reads keys from its .env file.
+const KEY_PROVIDERS = [["gemini", "Gemini (Google)"], ["anthropic", "Anthropic · Claude"]];
+
+function desktopBridge() {
+  return window.lyretextDesktop && window.lyretextDesktop.isDesktop ? window.lyretextDesktop : null;
+}
+
+function apiKeysCard() {
+  if (!desktopBridge()) {
+    return settingsCard("API keys",
+      `Keys are read by the backend from its <span class="mono">.env</span> file (<span class="mono">GEMINI_API_KEY</span>, <span class="mono">ANTHROPIC_API_KEY</span>). In the desktop app you enter them here instead.`, "");
+  }
+  const sub = "Stored encrypted on this computer and used only by LyreTeXt. A saved key is never shown again.";
+  if (!state.desktopKeys) {
+    if (!state.desktopKeysLoading) setTimeout(loadDesktopKeys, 0);
+    return settingsCard("API keys", sub, `<div class="settings-row">${ICONS.spinner} Loading…</div>`);
+  }
+  const status = Object.fromEntries(state.desktopKeys.map((k) => [k.provider, k.set]));
+  return settingsCard("API keys", sub, KEY_PROVIDERS.map(([provider, label]) => {
+    const isSet = !!status[provider];
+    const test = state.keyTests[provider];
+    const testLine = test
+      ? `<div class="field-help" data-key-test="${provider}" style="margin-top:6px;color:var(${test.ok ? "--ok-text" : "--danger-text"})">${test.ok ? "Key works" : "Key test failed"}: ${esc(test.detail || "")}</div>`
+      : "";
+    return settingsRow(
+      `${esc(label)} <span class="pill ${isSet ? "pill-ok" : "pill-neutral"}" data-key-status="${provider}" style="margin-left:8px"><span class="pill-dot"></span>${isSet ? "Set" : "Not set"}</span>`,
+      isSet ? "Paste a new key to replace the saved one." : "Paste your API key and save it.",
+      `<div class="row gap-2">
+        <input type="password" class="input mono" id="apiKey-${provider}" autocomplete="off" spellcheck="false" placeholder="${isSet ? "•••••••• (saved)" : "API key"}" />
+        <button class="btn btn-primary btn-sm" data-action="saveApiKey" data-provider="${provider}">Save</button>
+        <button class="btn btn-danger btn-sm" data-action="removeApiKey" data-provider="${provider}" ${isSet ? "" : "disabled"}>Remove</button>
+        <button class="btn btn-sm" data-action="testApiKey" data-provider="${provider}" ${isSet ? "" : "disabled"}>Test</button>
+      </div>${testLine}`);
+  }).join(""));
+}
+
+async function loadDesktopKeys() {
+  state.desktopKeysLoading = true;
+  try {
+    state.desktopKeys = await desktopBridge().listKeys();
+  } catch (err) {
+    state.desktopKeys = KEY_PROVIDERS.map(([provider]) => ({ provider, set: false }));
+    toast(`Could not read stored keys: ${err.message}`, "error");
+  } finally {
+    state.desktopKeysLoading = false;
+  }
+  rerender();
 }
 
 async function loadSettings() {
@@ -2393,6 +2452,44 @@ const ACTIONS = {
       await LyreAPI.updateSettings(state.settingsDraft);
       state.settings = JSON.parse(JSON.stringify(state.settingsDraft));
       toast("Settings saved — effective on next run", "success");
+    });
+  },
+  saveApiKey(el) {
+    const provider = el.dataset.provider;
+    const input = document.getElementById(`apiKey-${provider}`);
+    const key = input ? input.value : "";
+    // Clear the field straight away: the key lives on only in the desktop
+    // app's encrypted store, never in this page's state.
+    if (input) input.value = "";
+    if (!key.trim()) { toast("Paste a key first", "error"); return; }
+    safeAction(async () => {
+      try {
+        state.desktopKeys = await desktopBridge().setKey(provider, key);
+      } catch (err) {
+        state.desktopKeys = null;  // re-read the real status on the next render
+        throw err;
+      }
+      delete state.keyTests[provider];
+      toast("Key saved", "success");
+    });
+  },
+  removeApiKey(el) {
+    const provider = el.dataset.provider;
+    safeAction(async () => {
+      try {
+        state.desktopKeys = await desktopBridge().deleteKey(provider);
+      } catch (err) {
+        state.desktopKeys = null;  // re-read the real status on the next render
+        throw err;
+      }
+      delete state.keyTests[provider];
+      toast("Key removed");
+    });
+  },
+  testApiKey(el) {
+    const provider = el.dataset.provider;
+    safeAction(async () => {
+      state.keyTests[provider] = await desktopBridge().testKey(provider);
     });
   },
   resetSettings() {

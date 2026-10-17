@@ -47,6 +47,47 @@ BUNDLED_CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.yml"
 RUNS_DB_NAME = "lyretext_runs.db"
 
 
+# ============================================================================
+# Desktop key handling (#67, decision #84)
+# ============================================================================
+#
+# The desktop app holds each user's API keys itself (encrypted with Electron's
+# safeStorage) and hands them to this backend in its environment. It also sets
+# LYRETEXT_AUTH_TOKEN, a per-launch secret that every request must carry (see
+# lyretext.security). The token's presence is what marks "desktop mode":
+#   * keys come only from the app, so .env is never read (see _load_dotenv);
+#   * the local API requires the token and a loopback Host header.
+# With no token (the dev workflow) nothing changes: keys come from .env and the
+# API needs no auth.
+
+AUTH_TOKEN_ENV = "LYRETEXT_AUTH_TOKEN"
+
+# Providers whose keys the desktop app manages, and the env var each key is
+# delivered in (the names inferenceswitch's registry reads).
+PROVIDER_KEY_ENV: dict[str, str] = {
+    "gemini": "GEMINI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+}
+
+
+def desktop_mode() -> bool:
+    """True when the desktop app launched this backend (an auth token is set)."""
+    return bool(os.environ.get(AUTH_TOKEN_ENV))
+
+
+def _load_dotenv() -> None:
+    """Load the repo's .env, except in desktop mode.
+
+    In desktop mode the app's stored keys are the only keys: it strips every
+    *_API_KEY variable from the backend's environment before adding its own,
+    and a key the user removed must stay removed. Reading .env would undo both
+    (in the Electron dev shell the backend runs from the repo, where a .env
+    with real keys usually exists).
+    """
+    if not desktop_mode():
+        load_dotenv()
+
+
 @dataclass(frozen=True)
 class DataPaths:
     """Resolved locations of everything the backend writes.
@@ -384,7 +425,7 @@ def get_resolved_config(
         FileNotFoundError: if config_file does not exist
         ValueError: if configuration is invalid
     """
-    load_dotenv()
+    _load_dotenv()
     return ConfigResolver.resolve_from_layers(
         config_file=config_file,
         runtime_payload=runtime_payload,
@@ -433,9 +474,20 @@ def _get_client() -> Client:
     """Lazily build the shared inferenceswitch client (reads keys from env)."""
     global _client
     if _client is None:
-        load_dotenv()
+        _load_dotenv()
         _client = Client()
     return _client
+
+
+def reset_client() -> None:
+    """Drop the cached client, so the next call reads keys afresh.
+
+    The desktop app calls this (through POST /api/internal/keys) after the user
+    adds, changes or removes a key. The client also caches one adapter per
+    (provider, key), so resetting is what lets a replaced key be forgotten.
+    """
+    global _client
+    _client = None
 
 
 def _default_model(provider: str) -> str:
@@ -531,7 +583,7 @@ def _create_langchain_llm(model_type: str = "gemini", **options):
 
 
 def create_gemini_llm(**options) -> ChatGoogleGenerativeAI:
-    load_dotenv()
+    _load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     model_name = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
@@ -541,7 +593,7 @@ def create_gemini_llm(**options) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key, **options)
 
 def create_anthropic_llm(**options) -> ChatAnthropic:
-    load_dotenv()
+    _load_dotenv()
     api_key = os.getenv("ANTHROPIC_API_KEY")
     model_name = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 
@@ -559,7 +611,7 @@ def initialise_client(model_type: str = "gemini", **options):
         raise ValueError(f"Unsupported model type: {model_type}")
 
 def initialise_gemini_client(**options):
-    load_dotenv()
+    _load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
@@ -568,7 +620,7 @@ def initialise_gemini_client(**options):
     return genai.Client(**options)
 
 def initialise_anthropic_client(**options):
-    load_dotenv()
+    _load_dotenv()
     api_key = os.getenv("ANTHROPIC_API_KEY")
 
     if not api_key:

@@ -30,6 +30,40 @@ killed with `taskkill /pid <pid> /T /F`. If Electron itself is killed and never
 runs those handlers, `backend/entry.py`'s watchdog sees its stdin pipe close
 and exits the backend.
 
+## API keys and the local API (#67, decision #84)
+
+Each user runs LyreTeXt with their own provider keys, held only on their machine.
+
+- **Entry.** Settings → *API keys* (shown only in the app). The page talks to
+  `window.lyretextDesktop`, exposed by `preload.js` through `contextBridge`:
+  `listKeys()` (provider + set/unset, never a value), `setKey`, `deleteKey`,
+  `testKey`. Each is an `ipcRenderer.invoke` answered by `main.js`, which only
+  serves the app's own page.
+- **Storage.** `keys.js` encrypts each key with Electron's `safeStorage` (DPAPI
+  on Windows) and keeps a base64 blob per provider in
+  `%APPDATA%\LyreTeXt\keys.json`. If encryption is unavailable it refuses to
+  store rather than write plaintext. Providers: `gemini` → `GEMINI_API_KEY`,
+  `anthropic` → `ANTHROPIC_API_KEY`.
+- **Into the backend.** At launch the backend's environment is the parent's
+  with **every `*_API_KEY` variable removed**, plus the stored keys and
+  `LYRETEXT_AUTH_TOKEN`. In that mode the backend never reads `.env`. After a
+  save or remove, the main process POSTs the change to
+  `/api/internal/keys` (token header only), which updates the backend's
+  environment and resets the cached inferenceswitch client, so no restart is
+  needed. *Test* calls `/api/keys/verify`, which never echoes the key.
+- **Local API protection.** `LYRETEXT_AUTH_TOKEN` is 32 random bytes, new each
+  launch. The window carries it as an `HttpOnly`, `SameSite=Strict` cookie set
+  before `/ui/` loads; the main process sends it as `X-LyreTeXt-Token`. With
+  the token set, the backend (`lyretext/security.py`) answers 401 to any
+  request without it (except `GET /api/health`), 400 to any `Host` other than
+  `127.0.0.1:<port>` / `localhost:<port>`, sends no CORS headers, and rejects
+  run `output_dir`/`temp_dir` values outside the data dir.
+- **Logs.** A log filter masks every `*_API_KEY` value and the token in all
+  log records, so neither reaches `backend.log`.
+
+Without a token (`python -m lyretext`, the browser workflow) none of this
+applies: keys come from `.env` and the API needs no auth.
+
 ## Running
 
 ```bash
@@ -53,8 +87,8 @@ afterwards.
 
 `npm start` looks for `.venv` in the repo root or any parent (worktrees share the
 main checkout's venv); set `LYRETEXT_PYTHON` to override. Environment variables
-are passed through to the backend, so `LYRETEXT_MOCK=1` runs the mock pipeline
-with no API keys.
+are passed through to the backend (except `*_API_KEY`, see above), so
+`LYRETEXT_MOCK=1` runs the mock pipeline with no API keys.
 
 `npm run freeze` needs `pyinstaller` in the venv. In the spike build it also
 bundles the gitignored `demo/temp_output` and `demo/example_output` (found by

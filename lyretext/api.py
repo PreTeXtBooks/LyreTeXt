@@ -13,18 +13,19 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .config import data_paths
+from . import config as _config
+from .config import PROVIDER_KEY_ENV, data_paths
 from .orchestration.checkpointing import build_checkpointer, ensure_run_id
 from .service import (
     apply_chapter_command,
@@ -49,6 +50,15 @@ from .service import (
     revert_chapter_to_checkpoint,
     start_run,
     write_chapter_file_and_trigger,
+)
+from .security import (
+    AUTH_HEADER,
+    DevOnlyCORS,
+    LocalAuthMiddleware,
+    auth_token,
+    install_log_redaction,
+    redact,
+    token_matches,
 )
 
 # ---------------------------------------------------------------------------
@@ -134,7 +144,9 @@ def _spawn(coro, *, run_id: str, chapter_id: str | None = None):
         exc = t.exception()
         if exc is None:
             return
-        message = f"{type(exc).__name__}: {exc}"
+        # Shown on the run/chapter card: never let a key in a provider error
+        # message reach the UI (the log copy is redacted by the log filter).
+        message = redact(f"{type(exc).__name__}: {exc}")
         logger.exception("Background task failed (run=%s chapter=%s)", run_id, chapter_id)
         if chapter_id is None:
             _run_errors[run_id] = message
@@ -152,14 +164,22 @@ _background_tasks: set[asyncio.Task] = set()
 # App
 # ---------------------------------------------------------------------------
 
+# Key values and the desktop auth token never reach a log line (#67).
+install_log_redaction()
+
 app = FastAPI(title="LyreTeXt", version=__version__, docs_url="/api/docs")
 
+# Permissive CORS for the dev workflow; switched off in desktop mode, where the
+# app's own same-origin window is the only legitimate caller.
 app.add_middleware(
-    CORSMiddleware,
+    DevOnlyCORS,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so it runs first: in desktop mode (LYRETEXT_AUTH_TOKEN set) every
+# request needs the per-launch token and a loopback Host — see lyretext.security.
+app.add_middleware(LocalAuthMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +231,82 @@ def health():
     so it answers 200 whenever the server is up, even if those are broken.
     """
     return {"status": "ok", "version": __version__}
+
+
+# ---------------------------------------------------------------------------
+# API keys (desktop app, #67)
+# ---------------------------------------------------------------------------
+
+def _key_status() -> list[dict]:
+    return [
+        {"provider": provider, "set": bool(os.environ.get(env_var))}
+        for provider, env_var in PROVIDER_KEY_ENV.items()
+    ]
+
+
+@app.post("/api/internal/keys")
+async def set_internal_keys(request: Request):
+    """Set or unset provider keys in this process (desktop app only).
+
+    Called by the Electron main process after the user saves or removes a key,
+    so the change applies without restarting the backend. Body:
+    ``{"keys": {"gemini": "<key>" | null, ...}}``; null removes a key.
+
+    Requires the token in the ``X-LyreTeXt-Token`` header specifically: the
+    window's cookie is not enough, so the web layer can never push key material
+    here — only the main process, which holds the token, can. The body is
+    parsed by hand and never logged or echoed (FastAPI's validation errors
+    would echo it back).
+    """
+    token = auth_token()
+    if not token:
+        raise HTTPException(403, "Only available in the desktop app")
+    if not token_matches(request.headers.get(AUTH_HEADER), token):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Body must be JSON") from None
+    keys = body.get("keys") if isinstance(body, dict) else None
+    if not isinstance(keys, dict):
+        raise HTTPException(400, 'Expected {"keys": {provider: key | null}}')
+    for provider, value in keys.items():
+        if provider not in PROVIDER_KEY_ENV:
+            raise HTTPException(400, f"Unknown provider {provider!r}")
+        if value is not None and not (isinstance(value, str) and value.strip()):
+            raise HTTPException(400, f"Key for {provider!r} must be a non-empty string or null")
+    for provider, value in keys.items():
+        env_var = PROVIDER_KEY_ENV[provider]
+        if value is None:
+            os.environ.pop(env_var, None)
+        else:
+            os.environ[env_var] = value.strip()
+    # The cached client also caches one adapter per (provider, key); drop it so
+    # the next call uses the new key and the old one is forgotten.
+    _config.reset_client()
+    return {"keys": _key_status()}
+
+
+@app.post("/api/keys/verify")
+async def verify_key(body: dict = Body(...)):
+    """Smoke-test the current key for ``{"provider": ...}`` with the provider's
+    cheapest authenticated call. Returns ``{provider, ok, detail}``; the key is
+    never echoed (the provider's error text is redacted too)."""
+    provider = body.get("provider")
+    if provider not in PROVIDER_KEY_ENV:
+        raise HTTPException(400, f"Unknown provider {provider!r}")
+    if not os.environ.get(PROVIDER_KEY_ENV[provider]):
+        return {"provider": provider, "ok": False, "detail": f"No API key is set for {provider}."}
+
+    def _verify() -> tuple[bool, str]:
+        try:
+            return _config._get_client().verify_key(provider)
+        except Exception as exc:  # noqa: BLE001 - a bad key is an answer, not a 500
+            return False, f"{type(exc).__name__}: {exc}"
+
+    # The read pool: a key test must not queue behind running chapters.
+    ok, detail = await _read_in_thread(_verify)
+    return {"provider": provider, "ok": bool(ok), "detail": redact(str(detail))[:300]}
 
 
 @app.get("/api/browse")
@@ -308,6 +404,27 @@ def read_file_content(path: str = Query(..., description="Absolute path to a pro
 
 
 
+def _check_run_dirs(output_dir: str, temp_dir: str) -> None:
+    """In data-dir mode, refuse run directories outside the data dir (400).
+
+    The desktop app's local API must not be usable to write anywhere on disk:
+    an absolute path or a ``..`` that resolves outside the data dir is
+    rejected. Relative paths anchor in the data dir, as before. Dev mode (no
+    data dir) keeps accepting any path.
+    """
+    paths = data_paths()
+    if paths.root is None:
+        return
+    root = paths.root.resolve()
+    for field, raw in (("output_dir", output_dir), ("temp_dir", temp_dir)):
+        try:
+            resolved = paths.resolve(str(raw)).resolve()
+        except (OSError, ValueError, TypeError):
+            raise HTTPException(400, f"Invalid {field}") from None
+        if not resolved.is_relative_to(root):
+            raise HTTPException(400, f"{field} must be inside the data directory")
+
+
 @app.get("/api/runs")
 async def list_runs():
     """List every run as a lightweight summary for the runs library.
@@ -340,6 +457,7 @@ async def create_run(body: dict = Body(...)):
 
     if not source:
         raise HTTPException(400, "source path is required")
+    _check_run_dirs(output_dir, temp_dir)
     if run_id in _running:
         raise HTTPException(409, f"Run {run_id!r} already in progress")
 
@@ -382,6 +500,7 @@ async def create_run_from_upload(
         raise HTTPException(400, "files and paths must be the same length")
     if not files:
         raise HTTPException(400, "at least one file is required")
+    _check_run_dirs(output_dir, temp_dir)
 
     resolved_run_id = ensure_run_id(run_id)
     if resolved_run_id in _running:
