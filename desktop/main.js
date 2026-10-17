@@ -53,16 +53,34 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(1);
   });
 
+  // Set once a quit is under way (including the user closing the splash during
+  // startup), so a startup still in flight neither reports the backend it just
+  // lost as a failure nor opens a window.
+  let quitting = false;
+  app.on('before-quit', () => { quitting = true; });
+
+  // "Starting LyreTeXt…" while the backend comes up (#71): a fresh install's
+  // first launch can take ~30 s while Defender scans the new exe.
+  let splash = null;
+  const closeSplash = () => {
+    if (splash && !splash.isDestroyed()) splash.destroy();
+    splash = null;
+  };
+
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+    const win = mainWindow || splash;
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
   });
 
+  // Closing the splash during startup lands here too: it quits, and will-quit
+  // stops the half-started backend.
   app.on('window-all-closed', () => app.quit());
 
   app.whenReady().then(async () => {
+    splash = createSplash();
     // safeStorage is only usable once the app is ready.
     const keyStore = new KeyStore({ userDataDir: app.getPath('userData'), safeStorage });
     let baseUrl;
@@ -70,11 +88,14 @@ if (!app.requestSingleInstanceLock()) {
       baseUrl = await backend.start({ keys: keyStore.env() });
     } catch (err) {
       backend.stop();
+      if (quitting) return;
+      closeSplash();
       dialog.showErrorBox('LyreTeXt could not start',
         `The LyreTeXt backend failed to start:\n\n${err.message}\n\nLog: ${backend.logFile}`);
       app.exit(1);
       return;
     }
+    if (quitting) return;
 
     backend.child.on('exit', (code) => {
       if (backend.stopping) return;
@@ -104,11 +125,16 @@ if (!app.requestSingleInstanceLock()) {
       sameSite: 'strict',
       path: '/',
     });
+    if (quitting) return;
 
+    // Created hidden and shown once the UI has loaded; the splash stays up
+    // until then. The splash is closed only after this window exists, so
+    // there is never a moment with no window (which would quit the app).
     mainWindow = new BrowserWindow({
       width: 1400,
       height: 900,
       title: 'LyreTeXt',
+      show: false,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -132,8 +158,42 @@ if (!app.requestSingleInstanceLock()) {
       openExternalSafe(url);
     });
     mainWindow.on('closed', () => { mainWindow = null; });
-    await mainWindow.loadURL(`${baseUrl}/ui/`);
+    try {
+      await mainWindow.loadURL(`${baseUrl}/ui/`);
+    } finally {
+      // Shown even if the load failed, so the user sees the error page rather
+      // than a splash that never goes away.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+      closeSplash();
+    }
   });
+}
+
+// A small frameless window over nothing but the local splash.html: no preload,
+// sandboxed, and no navigation or pop-ups.
+function createSplash() {
+  const win = new BrowserWindow({
+    width: 380,
+    height: 260,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    center: true,
+    show: false,
+    title: 'Starting LyreTeXt',
+    backgroundColor: '#fcfcfc',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event) => event.preventDefault());
+  win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
+  win.loadFile(path.join(__dirname, 'splash.html')).catch(() => { /* cosmetic only */ });
+  return win;
 }
 
 // IPC behind window.lyretextDesktop (preload.js). Each handler answers
