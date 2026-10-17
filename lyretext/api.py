@@ -14,6 +14,7 @@ import asyncio
 import functools
 import logging
 import os
+import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,7 +27,10 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from . import config as _config
 from .config import PROVIDER_KEY_ENV, data_paths
+from .environment import environment_report, rmd_preflight, run_needs_r, summarize
 from .orchestration.checkpointing import build_checkpointer, ensure_run_id
+from .orchestration.graph import _mock_enabled
+from .pipeline.rmd import RToolchainError
 from .tls import use_os_trust_store
 from .service import (
     apply_chapter_command,
@@ -316,6 +320,69 @@ async def verify_key(body: dict = Body(...)):
     return {"provider": provider, "ok": bool(ok), "detail": redact(str(detail))[:300]}
 
 
+# ---------------------------------------------------------------------------
+# Environment checks (#70, decision #65)
+# ---------------------------------------------------------------------------
+
+def _resolved_options(node_id: str, run_config: dict | None = None) -> dict:
+    """The options *node_id* will run with (env < config.yml < run_config).
+    Falls back to the defaults if config.yml is unreadable: a broken config is
+    reported by the run itself, and must not hide the toolchain checks."""
+    config_file = data_paths().config_file
+    try:
+        resolved = _config.get_resolved_config(
+            config_file=config_file if config_file.exists() else None,
+            # Passed exactly as start_run passes it, so this sees the run's config.
+            runtime_payload=run_config or None,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not resolve config for environment checks", exc_info=True)
+        resolved = _config.RuntimeConfig()
+    return resolved.get_node_config(node_id)
+
+
+def _environment() -> dict:
+    opts = _resolved_options("translate_chapter")
+    report = environment_report(
+        pandoc_exe=opts.get("pandoc_exe"),
+        pandoc_writer=opts.get("pandoc_writer"),
+    )
+    logger.info("Environment: %s", summarize(report))
+    return report
+
+
+@app.get("/api/environment")
+async def get_environment():
+    """First-run checks: pandoc, the pretext.lua writer, R, knitr, API keys.
+
+    Each tool entry is ``{ok, error, guidance, path, source, ...}``; *guidance*
+    says what to install when something is missing. API keys report set/unset
+    per provider — never a value. Probes run with timeouts (see
+    lyretext.environment), so a hung R cannot hold the request for long.
+    """
+    report = await _read_in_thread(_environment)
+    report["api_keys"] = _key_status()
+    report["desktop"] = bool(auth_token())
+    return report
+
+
+async def _check_run_toolchain(source: str, run_config: dict | None = None) -> None:
+    """Refuse to start an R Markdown run without R and knitr (422), with what
+    to install, rather than let it fail on its first knit."""
+    if _mock_enabled():
+        return  # mock runs replay recorded output and run no tools
+
+    def _check() -> None:
+        pipeline = _resolved_options("process_to_markdown", run_config).get("pipeline", "rmd")
+        if run_needs_r(source, pipeline):
+            rmd_preflight()
+
+    try:
+        await _read_in_thread(_check)
+    except RToolchainError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
 @app.get("/api/browse")
 def browse_folder(initial: str = Query(default="", description="Initial directory to open")):
     """Open a native OS folder-picker dialog and return the chosen path.
@@ -467,6 +534,7 @@ async def create_run(body: dict = Body(...)):
     _check_run_dirs(output_dir, temp_dir)
     if run_id in _running:
         raise HTTPException(409, f"Run {run_id!r} already in progress")
+    await _check_run_toolchain(source, run_config)
 
     async def _run_bg():
         _running.add(run_id)
@@ -528,6 +596,11 @@ async def create_run_from_upload(
         dest = stage_dir / rel_to_stage
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(await upload.read())
+    try:
+        await _check_run_toolchain(str(stage_dir))
+    except HTTPException:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
 
     async def _run_bg():
         _running.add(resolved_run_id)

@@ -76,15 +76,16 @@ def _detect_pipeline(project_path: Path, exclude: str) -> str | None:
     return None
 
 
-def process_to_markdown(
-    state: SkeletonState,
-    config: RunnableConfig = None,
-) -> dict[str, Any]:
-    opts = resolve_node_opts(state, "process_to_markdown", config)
-    pipeline_name = opts["pipeline"]
-    project_source = state["project_source"]
-    temp_dir = state.get("temp_dir", "temp_output")
+def select_pipeline(project_source: str | Path, pipeline_name: str):
+    """The pipeline a run of *project_source* uses, given the configured one.
 
+    Returns ``(name, pipeline, warnings)``. Shared by process_to_markdown and
+    the API's start-of-run checks, so both agree on which pipeline (and so
+    which external tools) a project needs. A ``no_source_files`` warning means
+    no registered pipeline found anything to read.
+
+    Raises ValueError for an unknown configured pipeline.
+    """
     pipeline = PipelineRegistry.get(pipeline_name)
     if pipeline is None:
         raise ValueError(
@@ -122,6 +123,18 @@ def process_to_markdown(
                     f"folder — check the folder you selected is the one holding them."
                 ),
             })
+    return pipeline_name, pipeline, warnings
+
+
+def process_to_markdown(
+    state: SkeletonState,
+    config: RunnableConfig = None,
+) -> dict[str, Any]:
+    opts = resolve_node_opts(state, "process_to_markdown", config)
+    project_source = state["project_source"]
+    temp_dir = state.get("temp_dir", "temp_output")
+
+    _name, pipeline, warnings = select_pipeline(project_source, opts["pipeline"])
 
     result = pipeline.compile_to_markdown(
         project_path=project_source,

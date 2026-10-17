@@ -113,6 +113,12 @@ const state = {
   desktopKeys: null,
   desktopKeysLoading: false,
   keyTests: {},
+  // System check (#70): GET /api/environment, loaded on first need.
+  environment: null,
+  environmentLoading: false,
+  environmentError: null,
+  // Why the last Start run was refused, kept on the New Run page.
+  startError: null,
 
   pollTimer: null,
   viewSig: null,   // hash of the last polled view, to skip no-op re-renders
@@ -802,6 +808,7 @@ function renderNewRun() {
       </div>
 
       <div style="display:flex;flex-direction:column;gap:20px">
+        ${renderEnvironmentNotice()}
         <div class="card">
           <h3 style="margin:0 0 10px;font-family:var(--font-heading);font-weight:600;font-size:18px">Ready to start</h3>
           <p style="margin:0 0 16px;font-size:13.5px;line-height:1.55;color:var(--text-muted)">
@@ -811,6 +818,7 @@ function renderNewRun() {
           <button class="btn btn-primary btn-block" data-action="startRun" ${!sourceReady || state.starting ? "disabled" : ""}>
             ${state.starting ? ICONS.spinner + " Starting…" : ICONS.play + " Start run"}
           </button>
+          ${state.startError ? `<div id="startError" class="field-help" style="margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--danger-bg);color:var(--danger-text);line-height:1.5">${linkify(state.startError)}</div>` : ""}
         </div>
         <div class="card">
           <h3 style="margin:0 0 14px;font-family:var(--font-heading);font-weight:600;font-size:18px">Resume a previous run</h3>
@@ -1924,6 +1932,8 @@ function renderSettings() {
   return `
     ${topbar("Settings", "Defaults applied to new runs of this project.")}
     <div class="content" style="max-width:960px">
+      ${systemCheckCard()}
+
       ${apiKeysCard()}
 
       ${settingsCard("Default model", "Applied to every pipeline node unless overridden below.",
@@ -2044,6 +2054,135 @@ async function loadDesktopKeys() {
   rerender();
 }
 
+// ---------------------------------------------------------------------------
+// System check (#70): can LyreTeXt run its external tools here? pandoc and
+// the pretext.lua writer are required (the desktop app ships both); R and
+// knitr only for R Markdown projects (decision #65: the user installs R). Each
+// failing check carries the backend's own "what to install" guidance. Shown in
+// full on Settings, and on New Run whenever something needs attention.
+// ---------------------------------------------------------------------------
+
+const TOOL_SOURCES = {
+  bundled: "bundled with LyreTeXt",
+  PATH: "found on PATH",
+  "install location": "found in its install folder",
+  "pandoc user data directory": "found in pandoc's user data folder",
+  "working directory": "found in the working folder",
+  config: "set in config.yml",
+};
+
+function toolSource(source) {
+  if (!source) return "";
+  return TOOL_SOURCES[source] || `set by ${source}`;
+}
+
+// esc() the text, then turn bare http(s) URLs into links. Links open in the
+// user's browser (the desktop shell sends any non-app URL there).
+function linkify(text) {
+  return esc(text).replace(/https?:\/\/[^\s<"]+[^\s<".,;)]/g,
+    (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+}
+
+// [{id, label, ok, required, summary, detail, guidance}] from /api/environment.
+function environmentChecks(env) {
+  const tool = (id, label, item, required, okSummary) => ({
+    id, label, required, ok: !!item?.ok,
+    summary: item?.ok ? okSummary(item) : (item?.error || "Not available."),
+    detail: item?.path || "",
+    guidance: item?.ok ? "" : (item?.guidance || ""),
+  });
+  const keys = env.api_keys || [];
+  const anyKey = keys.some((k) => k.set);
+  const keyNames = Object.fromEntries(KEY_PROVIDERS);
+  return [
+    tool("pandoc", "pandoc", env.pandoc, true,
+      (p) => [`pandoc ${p.version || ""}`.trim(), toolSource(p.source)].filter(Boolean).join(" · ")),
+    tool("writer", "pretext.lua writer", env.writer, true,
+      (w) => ["Test conversion passed", toolSource(w.source)].filter(Boolean).join(" · ")),
+    tool("r", "R", env.r, false,
+      (r) => [`R ${r.version || ""}`.trim(), toolSource(r.source)].filter(Boolean).join(" · ")),
+    tool("knitr", "knitr (R package)", env.knitr, false,
+      (k) => `knitr ${k.version || ""}`.trim()),
+    {
+      id: "keys", label: "API keys", required: false, ok: anyKey,
+      summary: keys.map((k) => `${keyNames[k.provider] || k.provider}: ${k.set ? "set" : "not set"}`).join(" · ") || "No providers known.",
+      detail: "",
+      guidance: anyKey ? "" : (env.desktop
+        ? "Add a key for at least one provider under API keys below — runs call the model with your own key."
+        : "Set GEMINI_API_KEY or ANTHROPIC_API_KEY in the backend's .env file, then restart it."),
+    },
+  ];
+}
+
+function checkPill(c) {
+  if (c.ok) return `<span class="pill pill-ok" data-check-status="${c.id}"><span class="pill-dot"></span>OK</span>`;
+  if (c.required) return `<span class="pill pill-warn" data-check-status="${c.id}" style="background:var(--danger-bg);color:var(--danger-text)"><span class="pill-dot" style="background:var(--danger-text)"></span>Missing</span>`;
+  return `<span class="pill pill-warn" data-check-status="${c.id}"><span class="pill-dot"></span>${c.id === "keys" ? "None set" : "Not found"}</span>`;
+}
+
+function checkScope(c) {
+  if (c.id === "r" || c.id === "knitr") return "Needed for R Markdown (.Rmd) projects only.";
+  if (c.id === "keys") return "Needed for real runs (not mock runs).";
+  return "Needed for every project.";
+}
+
+function systemCheckCard() {
+  const sub = "The tools LyreTeXt runs on this computer. Re-check after installing something.";
+  const recheck = `<div class="row gap-2" style="padding-top:12px"><button class="btn btn-sm" data-action="recheckEnvironment" ${state.environmentLoading ? "disabled" : ""}>${state.environmentLoading ? ICONS.spinner + " Checking…" : ICONS.retry + " Re-check"}</button></div>`;
+  if (!state.environment) {
+    if (!state.environmentLoading && !state.environmentError) setTimeout(loadEnvironment, 0);
+    const body = state.environmentError
+      ? `<div class="settings-row"><div class="field-help" style="color:var(--danger-text)">Could not run the checks: ${esc(state.environmentError)}</div></div>${recheck}`
+      : `<div class="settings-row">${ICONS.spinner} Checking pandoc, the pretext.lua writer and R…</div>`;
+    return settingsCard("System check", sub, body);
+  }
+  return `<div id="systemCheck">${settingsCard("System check", sub,
+    environmentChecks(state.environment).map((c) => settingsRow(
+      `${esc(c.label)} <span style="margin-left:8px">${checkPill(c)}</span>`,
+      esc(checkScope(c)),
+      `<div data-check="${c.id}">
+        <div style="font-size:13px">${esc(c.summary)}</div>
+        ${c.detail ? `<div class="mono field-help" style="margin-top:2px;word-break:break-all">${esc(c.detail)}</div>` : ""}
+        ${c.guidance ? `<div class="field-help" style="margin-top:6px;color:var(--text-soft)">${linkify(c.guidance)}</div>` : ""}
+      </div>`)).join("") + recheck)}</div>`;
+}
+
+// New Run: only the checks that need attention, so a working setup shows
+// nothing extra.
+function renderEnvironmentNotice() {
+  if (!state.environment) {
+    if (!state.environmentLoading && !state.environmentError) setTimeout(loadEnvironment, 0);
+    return "";
+  }
+  const failing = environmentChecks(state.environment).filter((c) => !c.ok);
+  if (!failing.length) return "";
+  const blocking = failing.some((c) => c.required);
+  return `<div class="card" id="environmentNotice">
+    <h3 style="margin:0 0 10px;font-family:var(--font-heading);font-weight:600;font-size:18px">${blocking ? "Setup needed" : "Before you start"}</h3>
+    ${failing.map((c) => `
+      <div style="padding:8px 0;border-top:1px solid var(--divider)">
+        <div class="row gap-2" style="justify-content:space-between"><b style="font-size:13.5px">${esc(c.label)}</b>${checkPill(c)}</div>
+        <div style="font-size:13px;margin-top:4px">${esc(c.summary)} <span style="color:var(--text-faint)">${esc(checkScope(c))}</span></div>
+        ${c.guidance ? `<div class="field-help" style="margin-top:4px">${linkify(c.guidance)}</div>` : ""}
+      </div>`).join("")}
+    <button class="btn btn-ghost btn-sm" style="margin-top:8px" data-action="nav" data-tab="settings">Open System check ${ICONS.chevronRight}</button>
+  </div>`;
+}
+
+async function loadEnvironment() {
+  state.environmentLoading = true;
+  state.environmentError = null;
+  rerender();
+  try {
+    state.environment = await LyreAPI.getEnvironment();
+  } catch (err) {
+    state.environmentError = err.message || String(err);
+  } finally {
+    state.environmentLoading = false;
+  }
+  rerender();
+}
+
 async function loadSettings() {
   try {
     const s = await LyreAPI.getSettings();
@@ -2108,39 +2247,26 @@ const ACTIONS = {
   },
 
   startRun() {
+    state.startError = null;
     safeAction(async () => {
       state.starting = true;
       rerender();
-      // Generate the run_id client-side so output_dir/temp_dir can be scoped
-      // to it from the very first request — every run used to share the
-      // literal "output"/"temp" directories, so a chapter translated by an
-      // earlier run left its .ptx sitting there and a brand-new run would
-      // see it via a plain file-existence check and show it as already
-      // done, with no chapter thread of its own ever having run.
-      const runId = crypto.randomUUID();
-      const outputDir = `output/${runId}`;
-      const tempDir = `temp/${runId}`;
-      let result;
-      if (state.uploadFiles) {
-        const fd = new FormData();
-        for (const f of state.uploadFiles) {
-          fd.append("files", f);
-          fd.append("paths", f.webkitRelativePath || f.name);
-        }
-        fd.append("output_dir", outputDir);
-        fd.append("temp_dir", tempDir);
-        fd.append("run_id", runId);
-        result = await LyreAPI.startRunUpload(fd);
-      } else {
-        result = await LyreAPI.startRun(state.chosenSource, outputDir, tempDir, {}, runId);
+      try {
+        await startRunNow();
+      } catch (err) {
+        // Kept on the page, not only toasted: a refused start (e.g. R
+        // Markdown without R) says what to install, which outlives a toast.
+        state.startError = err.message || String(err);
+        throw err;
+      } finally {
+        state.starting = false;
       }
-      state.runId = result.run_id;
-      resetRunScopedState();
-      syncUrlToRun();
-      await waitForFirstGate();
-      state.starting = false;
-      startPolling();
     });
+  },
+
+  recheckEnvironment() {
+    state.environment = null;
+    loadEnvironment();
   },
 
   resumeRun(el) {
@@ -2465,6 +2591,7 @@ const ACTIONS = {
     safeAction(async () => {
       try {
         state.desktopKeys = await desktopBridge().setKey(provider, key);
+        if (state.environment) state.environment.api_keys = state.desktopKeys;
       } catch (err) {
         state.desktopKeys = null;  // re-read the real status on the next render
         throw err;
@@ -2478,6 +2605,7 @@ const ACTIONS = {
     safeAction(async () => {
       try {
         state.desktopKeys = await desktopBridge().deleteKey(provider);
+        if (state.environment) state.environment.api_keys = state.desktopKeys;
       } catch (err) {
         state.desktopKeys = null;  // re-read the real status on the next render
         throw err;
@@ -2542,17 +2670,52 @@ function resetWsPaneState() {
   state.wsRender = null; state.wsRenderKey = null; state.wsRenderStatus = "idle";
 }
 
+async function startRunNow() {
+  // Generate the run_id client-side so output_dir/temp_dir can be scoped
+  // to it from the very first request — every run used to share the
+  // literal "output"/"temp" directories, so a chapter translated by an
+  // earlier run left its .ptx sitting there and a brand-new run would
+  // see it via a plain file-existence check and show it as already
+  // done, with no chapter thread of its own ever having run.
+  const runId = crypto.randomUUID();
+  const outputDir = `output/${runId}`;
+  const tempDir = `temp/${runId}`;
+  let result;
+  if (state.uploadFiles) {
+    const fd = new FormData();
+    for (const f of state.uploadFiles) {
+      fd.append("files", f);
+      fd.append("paths", f.webkitRelativePath || f.name);
+    }
+    fd.append("output_dir", outputDir);
+    fd.append("temp_dir", tempDir);
+    fd.append("run_id", runId);
+    result = await LyreAPI.startRunUpload(fd);
+  } else {
+    result = await LyreAPI.startRun(state.chosenSource, outputDir, tempDir, {}, runId);
+  }
+  state.runId = result.run_id;
+  resetRunScopedState();
+  syncUrlToRun();
+  await waitForFirstGate();
+  startPolling();
+}
+
 async function waitForFirstGate() {
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 1000));
+    let view;
     try {
-      const view = await LyreAPI.getRun(state.runId);
-      state.view = view;
-      if (view.gate?.read_pending || (view.chapters || []).length) {
-        state.tab = "manifest";
-        return;
-      }
-    } catch { /* not ready yet */ }
+      view = await LyreAPI.getRun(state.runId);
+    } catch { continue; /* not ready yet */ }
+    state.view = view;
+    // The run failed before reaching the gate (e.g. a tool it needs is
+    // missing): say why now, rather than wait out the full minute.
+    if (view._error) throw new Error(view._error);
+    if (view.gate?.read_pending || (view.chapters || []).length) {
+      state.tab = "manifest";
+      return;
+    }
   }
   toast("Still processing — check back in a moment", "info");
   state.tab = "manifest";

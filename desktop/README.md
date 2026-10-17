@@ -20,10 +20,60 @@ existing web UI in its own window. Windows first; unsigned. See #63 (architectur
 3. polls `GET /api/health` until it returns 200;
 4. opens a window at `http://127.0.0.1:<port>/ui/`.
 
-Tool locations can be injected through the environment, which a bundled
-toolchain will use: `LYRETEXT_PANDOC_EXE`, `LYRETEXT_PANDOC_WRITER` (the
-`pretext.lua` writer) and `LYRETEXT_RSCRIPT_EXE`. Each falls back to a PATH
-lookup.
+Tool locations can be injected through the environment:
+`LYRETEXT_PANDOC_EXE`, `LYRETEXT_PANDOC_WRITER` (the `pretext.lua` writer) and
+`LYRETEXT_RSCRIPT_EXE`. Each falls back to a PATH lookup.
+
+## Bundled toolchain and R (#70, decisions #63, #65)
+
+The packaged app ships **pandoc** and Oscar Levin's **pretext.lua** writer
+(<https://github.com/oscarlevin/pandoc-pretext>) in `resources/toolchain`:
+
+```
+toolchain/
+  toolchain.json          what was staged: pandoc version, file hashes, sources
+  NOTICE.txt              third-party notice
+  pandoc/                 pandoc.exe, COPYRIGHT.txt, COPYING.rtf (GPL), SOURCE.txt
+  pretext-writer/         pretext.lua, pretext-environments.lua (loaded by
+                          pretext.lua), pretext-latex-reader.lua, LICENSE (GPL-2.0), SOURCE.txt
+```
+
+`npm run toolchain` (`scripts/stage-toolchain.js`, also run by `npm run pack`)
+stages it into `dist/toolchain`, and electron-builder copies that to
+`resources/toolchain` (`extraResources`). Its sources are configuration, so CI
+can supply a pandoc it downloaded:
+
+| Input | Flag | Env var | Default |
+|---|---|---|---|
+| pandoc executable | `--pandoc <file>` | `LYRETEXT_TOOLCHAIN_PANDOC` | `pandoc` on PATH |
+| writer folder | `--writer-dir <dir>` | `LYRETEXT_TOOLCHAIN_WRITER_DIR` | `<pandoc user data dir>/custom` |
+| output | `--out <dir>` | | `dist/toolchain` |
+
+pandoc must be 3.0 or later. `toolchain/toolchain.json` records the verified
+pandoc version and the pandoc-pretext commit and file hashes the writer was
+checked against; staging warns when what it is given differs. A `LICENSE` in
+the writer folder (an upstream checkout has one) is shipped as-is, otherwise the
+vendored `toolchain/licenses/GPL-2.0.txt`.
+
+When packaged, `backend-process.js` sets `LYRETEXT_PANDOC_EXE`,
+`LYRETEXT_PANDOC_WRITER` and `LYRETEXT_TOOLCHAIN_DIR` to the bundled copies,
+unless the first two are already set in the environment (an escape hatch for
+diagnosing a broken bundle). `npm start` and `start:frozen` keep the PATH
+lookup. `backend.log` records which applied.
+
+**R is not bundled** (#65). The backend runs `Rscript` once (the configured
+path or PATH, then the usual install folders) for R's version and whether knitr
+is installed, with a timeout that kills the process tree, so a hung R cannot
+stall anything. Starting an R Markdown run without R or knitr returns 422 with
+where to get R (<https://cran.r-project.org/bin/windows/base/>) and
+`install.packages("knitr")`; the Rmd pipeline raises the same guidance if it
+gets that far.
+
+**System check.** `GET /api/environment` (behind the local-API token) reports
+pandoc (version, bundled or PATH), the writer (found, and a tiny LaTeX →
+PreTeXt test conversion), R, knitr, and API keys set/unset, never a value.
+Settings shows it as *System check*; New Run repeats anything that needs
+attention.
 
 On quit, last-window-close or an uncaught error, the backend's process tree is
 killed with `taskkill /pid <pid> /T /F`. If Electron itself is killed and never
@@ -71,7 +121,8 @@ npm install                    # in desktop/
 npm start                      # backend from the project venv (python backend/entry.py)
 npm run freeze                 # PyInstaller -> desktop/dist/lyretext-backend (activate the venv first)
 npm run start:frozen           # Electron + the frozen backend
-npm run pack                   # electron-builder --win --dir -> desktop/release/win-unpacked
+npm run toolchain              # stage pandoc + pretext.lua -> desktop/dist/toolchain
+npm run pack                   # toolchain, then electron-builder --win --dir -> desktop/release/win-unpacked
 dist/lyretext-backend/lyretext-backend.exe --self-check   # verify the frozen bundle
 ```
 

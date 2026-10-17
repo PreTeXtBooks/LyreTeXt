@@ -1,0 +1,23 @@
+{
+  "$comment": "What the desktop app bundles (#70). Read by scripts/stage-toolchain.js. The pins record what was verified; staging warns if the copies it is given differ.",
+  "pandoc": {
+    "minVersion": "3.0",
+    "verifiedVersion": "3.10.1",
+    "license": "GPL-2.0-or-later",
+    "homepage": "https://pandoc.org",
+    "source": "https://github.com/jgm/pandoc"
+  },
+  "pandocPretext": {
+    "description": "Oscar Levin's pandoc custom writer for PreTeXt (pretext.lua) and its shared environment table",
+    "license": "GPL-2.0",
+    "source": "https://github.com/oscarlevin/pandoc-pretext",
+    "commit": "53aaf62e7104de05cc9419840494fabeb7bfa014",
+    "required": ["pretext.lua", "pretext-environments.lua"],
+    "optional": ["pretext-latex-reader.lua"],
+    "gitBlobs": {
+      "pretext.lua": "f8f1aad71c04e8411717c681a1b5442f84369c31",
+      "pretext-environments.lua": "06df3fc939627ff1d456a9547436bc2194af0213",
+      "pretext-latex-reader.lua": "441ee6c0c559cbd3dc6611cfe11aa57701d8b6a7"
+    }
+  }
+}

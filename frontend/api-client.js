@@ -98,6 +98,7 @@ const LyreAPI = (() => {
     getJobs: (runId) => req(`/api/runs/${encodeURIComponent(runId)}/jobs`),
 
     // -- settings -------------------------------------------------------------
+    getEnvironment: () => req("/api/environment"),
     getSettings: () => req("/api/settings"),
     updateSettings: (patch) => req("/api/settings", { method: "PATCH", body: json(patch) }),
   };
