@@ -86,6 +86,9 @@ hiddenimports = (
     # changes; the adapters themselves are listed for the same reason.
     + collect_submodules("inferenceswitch")
     + ["anthropic", "google.genai", "google.genai.types"]
+    # lyretext.tls imports truststore inside a function, and truststore picks
+    # its platform backend (_windows / _macos / _openssl) at import time (#90).
+    + collect_submodules("truststore")
 )
 
 a = Analysis(

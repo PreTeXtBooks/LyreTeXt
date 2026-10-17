@@ -12,7 +12,8 @@ package:
 * Static imports of modules uvicorn only names as strings, so PyInstaller's
   import analysis finds them.
 * `--self-check [--live]`: verify the bundle's dynamically loaded pieces
-  (inferenceswitch's adapters, model cards and provider SDKs) and exit.
+  (OS certificate-store TLS via truststore, inferenceswitch's adapters, model
+  cards and provider SDKs) and exit.
 """
 from __future__ import annotations
 
@@ -55,6 +56,16 @@ def _self_check(live: bool) -> int:
     from inferenceswitch.adapters import build_adapter
 
     from lyretext.config import create_llm
+
+    from lyretext.tls import os_trust_store_active
+
+    # lyretext.api (imported above) switches TLS to the OS certificate store;
+    # without it every provider call fails behind a TLS-intercepting proxy (#90).
+    if not os_trust_store_active():
+        print("FAIL tls: not using the OS certificate store (is truststore bundled?)")
+        return 1
+    import truststore
+    print(f"ok tls: OS certificate store (truststore {truststore.__version__})")
 
     dummy = "self-check-dummy-key"
     client = Client(key_provider=lambda spec: dummy)
