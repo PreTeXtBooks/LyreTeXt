@@ -11,6 +11,9 @@ python-dotenv>=1.0.1
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
+# TLS verification against the OS certificate store (#90): provider calls work
+# behind proxies / antivirus that use a locally trusted root.
+truststore>=0.10
 
 # Dev / test
 pytest>=7.4.0

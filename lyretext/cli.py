@@ -6,6 +6,7 @@ import sys
 from typing import Any
 
 from lyretext.orchestration.checkpointing import build_checkpointer, build_checkpoint_config
+from lyretext.tls import use_os_trust_store
 from lyretext.orchestration.graph import (
     invoke_workflow_graph,
     resume_workflow_graph,
@@ -411,6 +412,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    # Before any provider client exists: verify TLS against the OS store (#90).
+    use_os_trust_store()
 
     dispatch = {
         "start": cmd_start,

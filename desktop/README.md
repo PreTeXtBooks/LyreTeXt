@@ -75,7 +75,9 @@ npm run pack                   # electron-builder --win --dir -> desktop/release
 dist/lyretext-backend/lyretext-backend.exe --self-check   # verify the frozen bundle
 ```
 
-`--self-check` imports the app, loads inferenceswitch's model cards and builds
+`--self-check` imports the app, checks that TLS verifies against the Windows
+certificate store (truststore, #90; certifi alone fails behind proxies and
+antivirus that intercept TLS), loads inferenceswitch's model cards and builds
 both provider adapters (which import the provider SDKs dynamically), then
 exits. Mock runs never touch these, so this is the check that a frozen bundle
 can actually make LLM calls. Add `--live` to also make one minimal structured

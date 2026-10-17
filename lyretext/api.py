@@ -27,6 +27,7 @@ from . import __version__
 from . import config as _config
 from .config import PROVIDER_KEY_ENV, data_paths
 from .orchestration.checkpointing import build_checkpointer, ensure_run_id
+from .tls import use_os_trust_store
 from .service import (
     apply_chapter_command,
     apply_chapter_decision,
@@ -66,6 +67,12 @@ from .security import (
 # ---------------------------------------------------------------------------
 
 logger = logging.getLogger("lyretext.api")
+
+# Provider calls verify TLS against the OS certificate store (plus certifi), so
+# they work behind proxies with a locally trusted root (#90). Here because every
+# server mode imports this module — including uvicorn's --reload worker, which
+# never runs lyretext.__main__.
+use_os_trust_store()
 
 _UI_DIR = Path(__file__).parent.parent / "frontend"
 _checkpointer = None
