@@ -1,0 +1,280 @@
+# Desktop app: test, build the Windows installer, smoke-test it, and on a v*
+# tag prepare a DRAFT GitHub Release (#71; decisions #64, #66, #94).
+#
+# The release job only ever creates a draft. A person reviews and publishes it.
+# workflow_dispatch with release_dry_run=true runs the release job's steps
+# without creating anything on GitHub.
+name: Desktop
+
+on:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'lyretext/**'
+      - 'frontend/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/desktop.yml'
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_dry_run:
+        description: 'Also run the release job as a dry run (prepares the release files, publishes nothing)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Test, build installer, smoke-test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      version: ${{ steps.installer.outputs.version }}
+      installer: ${{ steps.installer.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same minor version as the maintainers' local venv.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller==6.22.3
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Read toolchain pins
+        id: pins
+        run: |
+          $p = Get-Content desktop/toolchain/toolchain.json -Raw | ConvertFrom-Json
+          "pandoc_version=$($p.pandoc.verifiedVersion)" >> $env:GITHUB_OUTPUT
+          "pandoc_url=$($p.pandoc.windowsZip.url)" >> $env:GITHUB_OUTPUT
+          "pandoc_sha256=$($p.pandoc.windowsZip.sha256)" >> $env:GITHUB_OUTPUT
+          "writer_repo=$($p.pandocPretext.source)" >> $env:GITHUB_OUTPUT
+          "writer_commit=$($p.pandocPretext.commit)" >> $env:GITHUB_OUTPUT
+
+      - name: Fetch pandoc ${{ steps.pins.outputs.pandoc_version }} (SHA-256 verified)
+        env:
+          PANDOC_URL: ${{ steps.pins.outputs.pandoc_url }}
+          PANDOC_SHA256: ${{ steps.pins.outputs.pandoc_sha256 }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'pandoc'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $zip = Join-Path $dir 'pandoc.zip'
+          Invoke-WebRequest $env:PANDOC_URL -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:PANDOC_SHA256) { throw "pandoc zip SHA-256 $hash does not match the pin $env:PANDOC_SHA256" }
+          Write-Host "pandoc zip SHA-256 verified: $hash"
+          Expand-Archive $zip (Join-Path $dir 'x') -Force
+          $exe = Get-ChildItem (Join-Path $dir 'x') -Recurse -Filter pandoc.exe | Select-Object -First 1
+          & $exe.FullName --version | Select-Object -First 1
+          "PANDOC_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+      - name: Fetch pandoc-pretext at the pinned commit
+        env:
+          WRITER_REPO: ${{ steps.pins.outputs.writer_repo }}
+          WRITER_COMMIT: ${{ steps.pins.outputs.writer_commit }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'pandoc-pretext'
+          git init --quiet $dir
+          git -C $dir fetch --quiet --depth 1 $env:WRITER_REPO $env:WRITER_COMMIT
+          git -C $dir checkout --quiet --detach FETCH_HEAD
+          $head = git -C $dir rev-parse HEAD
+          if ($head -ne $env:WRITER_COMMIT) { throw "checked out $head, expected $env:WRITER_COMMIT" }
+          "WRITER_DIR=$dir" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      # Electron and electron-builder (NSIS, winCodeSign) download their own
+      # binaries; keep them between runs.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('desktop/package-lock.json') }}
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: Stage toolchain (pins enforced)
+        working-directory: desktop
+        run: node scripts/stage-toolchain.js --strict --pandoc $env:PANDOC_EXE --writer-dir $env:WRITER_DIR
+
+      - name: Freeze backend
+        run: python desktop/backend/freeze.py
+
+      - name: Frozen backend self-check
+        run: |
+          & desktop/dist/lyretext-backend/lyretext-backend.exe --self-check
+          if ($LASTEXITCODE -ne 0) { throw "self-check exited with $LASTEXITCODE" }
+
+      - name: Build NSIS installer
+        working-directory: desktop
+        env:
+          # Unsigned beta (#66): do not look for a signing certificate.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Locate installer
+        id: installer
+        run: |
+          $exe = Get-ChildItem desktop/release -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'no installer in desktop/release' }
+          $mb = [math]::Round($exe.Length / 1MB, 1)
+          $version = (Get-Content desktop/package.json -Raw | ConvertFrom-Json).version
+          "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "$($exe.Name): $mb MB ($($exe.Length) bytes)"
+          @("### Installer", "", "``$($exe.Name)``: **$mb MB** ($($exe.Length) bytes)", "") | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Smoke-test the installer
+        run: ./desktop/scripts/ci-smoke.ps1 -Installer '${{ steps.installer.outputs.path }}'
+
+      - name: Collect licence and notice files
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'notices'
+          $tc = 'desktop/dist/toolchain'
+          New-Item -ItemType Directory -Force "$out/pandoc", "$out/pretext-writer" | Out-Null
+          Copy-Item LICENSE "$out/LICENSE-LyreTeXt.txt"
+          Copy-Item "$tc/NOTICE.txt", "$tc/toolchain.json" $out
+          Copy-Item "$tc/pandoc/*" "$out/pandoc" -Exclude 'pandoc.exe'
+          Copy-Item "$tc/pretext-writer/LICENSE", "$tc/pretext-writer/SOURCE.txt" "$out/pretext-writer"
+          Get-ChildItem $out -Recurse -File | ForEach-Object { $_.FullName.Substring($out.Length + 1) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LyreTeXt-installer
+          path: ${{ steps.installer.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LyreTeXt-notices
+          path: ${{ runner.temp }}/notices
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Draft release${{ github.event_name == 'workflow_dispatch' && ' (dry run)' || '' }}
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_dry_run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      DRY_RUN: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match desktop/package.json version ${VERSION} (expected v${VERSION})"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: LyreTeXt-installer
+          path: release
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: LyreTeXt-notices
+          path: notices
+
+      # GPL source for the pandoc binary we ship: its exact upstream source
+      # tarball, attached to the release (conservative default pending #94).
+      - name: Fetch pandoc's source tarball
+        run: |
+          tag=$(jq -r .pandoc.sourceTag desktop/toolchain/toolchain.json)
+          commit=$(jq -r .pandoc.sourceCommit desktop/toolchain/toolchain.json)
+          url=$(jq -r .pandoc.sourceTarball desktop/toolchain/toolchain.json)
+          actual=$(git ls-remote https://github.com/jgm/pandoc "refs/tags/${tag}" | cut -f1)
+          if [ "$actual" != "$commit" ]; then
+            echo "::error::pandoc tag ${tag} points at ${actual}, not the pinned ${commit}"
+            exit 1
+          fi
+          curl -fsSL "$url" -o "release/pandoc-${tag}-source.tar.gz"
+          tar -tzf "release/pandoc-${tag}-source.tar.gz" > /dev/null
+          echo "pandoc ${tag} source (${commit}): $(du -h "release/pandoc-${tag}-source.tar.gz" | cut -f1)"
+
+      - name: Package notices and checksums
+        run: |
+          (cd notices && zip -qr "../release/LyreTeXt-${VERSION}-licences-and-notices.zip" .)
+          (cd release && sha256sum -- * > ../SHA256SUMS.txt) && mv SHA256SUMS.txt release/ && cat release/SHA256SUMS.txt
+
+      - name: Write release notes
+        run: |
+          installer=$(cd release && ls *.exe)
+          cat > notes.md <<EOF
+          **Beta, unsigned (#66).** Windows 10/11, 64-bit. Installs for the current user only; no administrator rights needed.
+
+          ### Installing
+          1. Download \`${installer}\` and run it.
+          2. Windows SmartScreen will say *"Windows protected your PC"*, because the installer is not code-signed yet. Click **More info**, then **Run anyway**.
+          3. The first launch can take up to a minute while Windows Defender scans the app; a *Starting LyreTeXt…* window shows meanwhile.
+
+          ### Attached
+          - \`${installer}\`: the installer.
+          - \`LyreTeXt-${VERSION}-licences-and-notices.zip\`: LyreTeXt's licence (GPL-3.0) and the notices and licences of the bundled third-party tools.
+          - \`$(cd release && ls pandoc-*-source.tar.gz)\`: the exact upstream source of the bundled pandoc (GPL-2.0-or-later).
+          - \`SHA256SUMS.txt\`: checksums of the above.
+
+          Bundled: pandoc $(jq -r .pandoc.verifiedVersion desktop/toolchain/toolchain.json) and Oscar Levin's pandoc-pretext writer at $(jq -r .pandocPretext.commit desktop/toolchain/toolchain.json | cut -c1-12). R is not bundled; R Markdown projects need R and knitr installed.
+          EOF
+          cat notes.md
+
+      - name: Create draft release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release/* \
+            --draft --prerelease --verify-tag \
+            --title "LyreTeXt ${VERSION}" --notes-file notes.md
+
+      - name: Dry run summary
+        if: env.DRY_RUN == 'true'
+        run: |
+          {
+            echo "### Release dry run: nothing was created on GitHub"
+            echo
+            echo "A v${VERSION} tag would create a **draft** release with:"
+            echo
+            echo '```'
+            (cd release && ls -l)
+            echo '```'
+            echo
+            cat notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
