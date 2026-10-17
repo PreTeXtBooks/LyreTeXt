@@ -128,7 +128,10 @@ For the Electron desktop-distribution work — issues in the `W1-DESK` milestone
 else — George has delegated the maintainer's role to the orchestrating Claude session:
 
 - **It launches and directs subagents** for `W1-DESK` tasks itself (no chip click needed) and
-  approves their plans in George's place; it may pre-approve a scoped plan in the brief.
+  approves their plans in George's place; it may pre-approve a scoped plan in the brief. The
+  desktop app only lets a session start *new sessions* from a human's own message, so for this
+  work it uses **in-process background agents, each in its own git worktree** — the one
+  exception to rule 1 above. Their output still lands on GitHub (draft PRs, decision issues).
 - **It makes the decisions** for this work and records every one as a decision issue under
   Part 2. A decision made without George is recorded `Mode: auto`, closed, and labelled
   **`unreviewed`** so George can review it afterwards; only George clears that label.
