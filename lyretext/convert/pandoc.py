@@ -52,17 +52,30 @@ def find_pandoc(explicit: str | None = None) -> str:
     Raises:
         PandocNotFoundError: if pandoc cannot be found anywhere.
     """
-    candidate = (
-        explicit
-        or os.environ.get(PANDOC_EXE_ENV)
-        or os.environ.get("PANDOC_EXE")
-    )
-    if candidate:
-        return candidate
+    return locate_pandoc(explicit)[0]
+
+
+def locate_pandoc(explicit: str | None = None) -> tuple[str, str]:
+    """``find_pandoc``, plus where the answer came from.
+
+    Returns ``(path, source)``, where *source* is one of ``"config"``,
+    ``"LYRETEXT_PANDOC_EXE"``, ``"PANDOC_EXE"``, ``"PATH"`` or
+    ``"install location"`` — what the environment checks report.
+
+    Raises:
+        PandocNotFoundError: if pandoc cannot be found anywhere.
+    """
+    for candidate, source in (
+        (explicit, "config"),
+        (os.environ.get(PANDOC_EXE_ENV), PANDOC_EXE_ENV),
+        (os.environ.get("PANDOC_EXE"), "PANDOC_EXE"),
+    ):
+        if candidate:
+            return candidate, source
 
     found = shutil.which("pandoc")
     if found:
-        return found
+        return found, "PATH"
 
     # Windows-specific fallbacks — pandoc's own installer uses LOCALAPPDATA,
     # the MSI/choco route uses Program Files.
@@ -77,7 +90,7 @@ def find_pandoc(explicit: str | None = None) -> str:
             candidates.extend(glob.glob(pattern))
 
     if candidates:
-        return sorted(candidates)[-1]
+        return sorted(candidates)[-1], "install location"
 
     raise PandocNotFoundError(
         "pandoc was not found. Install it from https://pandoc.org/installing.html, "
@@ -180,5 +193,6 @@ __all__ = [
     "PandocNotFoundError",
     "convert_markdown_to_pretext",
     "find_pandoc",
+    "locate_pandoc",
     "resolve_writer",
 ]

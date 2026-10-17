@@ -10,7 +10,8 @@
     "start": "electron .",
     "start:frozen": "electron . --backend=frozen",
     "freeze": "python backend/freeze.py",
-    "pack": "electron-builder --win --dir"
+    "toolchain": "node scripts/stage-toolchain.js",
+    "pack": "node scripts/stage-toolchain.js && electron-builder --win --dir"
   },
   "devDependencies": {
     "electron": "^38.2.0",
@@ -33,6 +34,11 @@
       {
         "from": "dist/lyretext-backend",
         "to": "backend",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "dist/toolchain",
+        "to": "toolchain",
         "filter": ["**/*"]
       }
     ],

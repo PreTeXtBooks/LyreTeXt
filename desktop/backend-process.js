@@ -86,17 +86,37 @@ async function waitForHealthy(baseUrl, child, { timeoutMs = 60000, intervalMs = 
   throw new Error(`backend did not become healthy within ${timeoutMs / 1000}s`);
 }
 
+// The bundled toolchain (#70): pandoc and the pretext.lua writer, staged by
+// `npm run toolchain` into dist/toolchain and shipped by electron-builder as
+// resources/toolchain. Only the packaged app points the backend at it; `npm
+// start` and `start:frozen` keep today's PATH lookup. A tool location already
+// set in the environment wins, as an escape hatch for diagnosing a broken
+// bundle. LYRETEXT_TOOLCHAIN_DIR lets the backend report a tool as "bundled".
+function toolchainEnv({ isPackaged, resourcesPath }, parentEnv = process.env, exists = fs.existsSync) {
+  if (!isPackaged) return {};
+  const dir = path.join(resourcesPath, 'toolchain');
+  if (!exists(dir)) return {};
+  const pandoc = path.join(dir, 'pandoc', process.platform === 'win32' ? 'pandoc.exe' : 'pandoc');
+  const writer = path.join(dir, 'pretext-writer', 'pretext.lua');
+  const env = { LYRETEXT_TOOLCHAIN_DIR: dir };
+  if (!parentEnv.LYRETEXT_PANDOC_EXE && exists(pandoc)) env.LYRETEXT_PANDOC_EXE = pandoc;
+  if (!parentEnv.LYRETEXT_PANDOC_WRITER && exists(writer)) env.LYRETEXT_PANDOC_WRITER = writer;
+  return env;
+}
+
 // The backend's environment (decision #84): the parent's, minus every
-// *_API_KEY variable, plus the app's stored keys and the per-launch auth token.
-// Only keys the user entered in the app reach the backend — never one that
-// happens to be set in the shell or system environment Electron started from.
-function buildBackendEnv(parentEnv, { keys = {}, authToken }) {
+// *_API_KEY variable, plus the app's stored keys, the bundled toolchain's
+// locations and the per-launch auth token. Only keys the user entered in the
+// app reach the backend — never one that happens to be set in the shell or
+// system environment Electron started from.
+function buildBackendEnv(parentEnv, { keys = {}, authToken, toolchain = {} }) {
   const env = { ...parentEnv };
   for (const name of Object.keys(env)) {
     if (/_API_KEY$/i.test(name)) delete env[name];
   }
   return {
     ...env,
+    ...toolchain,
     ...keys,
     LYRETEXT_AUTH_TOKEN: authToken,
     PYTHONUNBUFFERED: '1',
@@ -124,8 +144,12 @@ class Backend {
     this.port = await getFreePort();
     const { cmd, args } = resolveBackendCommand(this.opts);
     fs.mkdirSync(this.dataDir, { recursive: true });
+    const toolchain = toolchainEnv(this.opts);
     const log = fs.openSync(this.logFile, 'a');
     fs.writeSync(log, `\n--- ${new Date().toISOString()} starting ${cmd} ${args.join(' ')} on port ${this.port}, data dir ${this.dataDir}\n`);
+    fs.writeSync(log, Object.keys(toolchain).length
+      ? `--- bundled toolchain: ${Object.entries(toolchain).map(([k, v]) => `${k}=${v}`).join(' ')}\n`
+      : '--- no bundled toolchain; pandoc and pretext.lua are looked up on PATH\n');
 
     const backendArgs = [
       ...args,
@@ -142,7 +166,7 @@ class Backend {
       // so start it somewhere writable rather than wherever Electron was
       // launched from.
       cwd: this.dataDir,
-      env: buildBackendEnv(process.env, { keys, authToken: this.authToken }),
+      env: buildBackendEnv(process.env, { keys, authToken: this.authToken, toolchain }),
       // stdin is a pipe the backend's watchdog reads: if this process dies
       // without running its exit handlers, the pipe closes and the backend exits.
       stdio: ['pipe', log, log],
@@ -200,4 +224,4 @@ function postJson(baseUrl, urlPath, payload, authToken, timeoutMs = 30000) {
   });
 }
 
-module.exports = { Backend, buildBackendEnv, postJson };
+module.exports = { Backend, buildBackendEnv, postJson, toolchainEnv };

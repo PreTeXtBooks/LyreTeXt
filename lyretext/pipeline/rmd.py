@@ -5,8 +5,10 @@ Handles .rmd/.Rmd file compilation using knitr.
 
 import glob
 import os
+import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Optional, Dict
@@ -20,6 +22,54 @@ from . import PipelineInterface
 # Precedence: rscript_exe kwarg → LYRETEXT_RSCRIPT_EXE → RSCRIPT_EXE → PATH →
 # common Windows install locations.
 RSCRIPT_EXE_ENV = "LYRETEXT_RSCRIPT_EXE"
+
+# R is not bundled with the desktop app (decision #65): the user installs it,
+# and anything that finds it missing says what to install.
+CRAN_WINDOWS_URL = "https://cran.r-project.org/bin/windows/base/"
+KNITR_INSTALL_CMD = 'install.packages("knitr")'
+
+# R's error when a package is absent: "there is no package called 'knitr'"
+# (curly quotes in a UTF-8 locale).
+_KNITR_MISSING_RE = re.compile(r"there is no package called\s*\W?knitr\W", re.IGNORECASE)
+
+
+class RToolchainError(RuntimeError):
+    """R or knitr is missing for an R Markdown run.
+
+    The message is meant for the user as-is: what is wrong and what to install.
+    """
+
+
+def r_download_url() -> str:
+    """Where to get R for this platform."""
+    if sys.platform == "win32":
+        return CRAN_WINDOWS_URL
+    if sys.platform == "darwin":
+        return "https://cran.r-project.org/bin/macosx/"
+    return "https://cran.r-project.org/"
+
+
+def r_missing_guidance() -> str:
+    exe = "Rscript.exe" if sys.platform == "win32" else "Rscript"
+    return (
+        f"Install R from {r_download_url()}, then open R and run "
+        f"{KNITR_INSTALL_CMD}. If R is already installed somewhere LyreTeXt "
+        f"does not look, set {RSCRIPT_EXE_ENV} to the full path of {exe}."
+    )
+
+
+def knitr_missing_guidance() -> str:
+    return f"Open R and run {KNITR_INSTALL_CMD}, then try again."
+
+
+def rmd_requirement_message(problem: str, guidance: str) -> str:
+    """The user-facing error for an R Markdown run that cannot start."""
+    return f"R Markdown projects need R with the knitr package. {problem} {guidance}"
+
+
+def _runnable(exe: str) -> bool:
+    """True if *exe* names an existing file or a command on PATH."""
+    return os.path.isfile(exe) or shutil.which(exe) is not None
 
 
 class RmdPipeline(PipelineInterface):
@@ -63,9 +113,17 @@ class RmdPipeline(PipelineInterface):
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
         
-        # Find Rscript executable
-        rscript = self.resolve_rscript(kwargs.get("rscript_exe"))
-        
+        # Find Rscript. A missing R is reported as what to install, not as the
+        # subprocess error each file would otherwise fail with.
+        try:
+            rscript = self.resolve_rscript(kwargs.get("rscript_exe"))
+        except FileNotFoundError:
+            raise RToolchainError(rmd_requirement_message(
+                "R was not found on this computer.", r_missing_guidance())) from None
+        if not _runnable(rscript):
+            raise RToolchainError(rmd_requirement_message(
+                f"Rscript was not found at {rscript}.", r_missing_guidance()))
+
         markdown_files = {}
         errors = []
         
@@ -106,14 +164,25 @@ class RmdPipeline(PipelineInterface):
                 )
                 
                 if result.returncode != 0:
+                    if _KNITR_MISSING_RE.search(result.stderr or ""):
+                        # Every other file would fail the same way.
+                        raise RToolchainError(rmd_requirement_message(
+                            "R is installed, but the knitr package is not.",
+                            knitr_missing_guidance()))
                     errors.append(f"knitr compilation failed for {source_path.name}: {result.stderr}")
                     print(f"[RMD] Error: {result.stderr}")
                 else:
                     markdown_files[str(source_path)] = str(markdown_output)
                     print(f"[RMD] Success: {markdown_output}")
-                    
+
             except subprocess.TimeoutExpired:
                 errors.append(f"knitr compilation timeout for {source_path.name}")
+            except RToolchainError:
+                raise
+            except OSError as e:
+                # Rscript itself could not be started.
+                raise RToolchainError(rmd_requirement_message(
+                    f"Rscript at {rscript} could not be run ({e}).", r_missing_guidance())) from e
             except Exception as e:
                 errors.append(f"Error compiling {source_path.name}: {str(e)}")
         
@@ -210,12 +279,26 @@ class RmdPipeline(PipelineInterface):
     def resolve_rscript(cls, explicit: Optional[str] = None) -> str:
         """Rscript to run: *explicit* → LYRETEXT_RSCRIPT_EXE → RSCRIPT_EXE →
         PATH / install-location discovery."""
-        return (
-            explicit
-            or os.environ.get(RSCRIPT_EXE_ENV)
-            or os.environ.get("RSCRIPT_EXE")
-            or cls._find_rscript()
-        )
+        return cls.locate_rscript(explicit)[0]
+
+    @classmethod
+    def locate_rscript(cls, explicit: Optional[str] = None) -> tuple[str, str]:
+        """``resolve_rscript``, plus where the answer came from: one of
+        ``"config"``, ``"LYRETEXT_RSCRIPT_EXE"``, ``"RSCRIPT_EXE"``, ``"PATH"``
+        or ``"install location"``.
+
+        Raises FileNotFoundError if Rscript cannot be found anywhere. A path
+        given explicitly or by env var is returned as given, existing or not.
+        """
+        for candidate, source in (
+            (explicit, "config"),
+            (os.environ.get(RSCRIPT_EXE_ENV), RSCRIPT_EXE_ENV),
+            (os.environ.get("RSCRIPT_EXE"), "RSCRIPT_EXE"),
+        ):
+            if candidate:
+                return candidate, source
+        path = cls._find_rscript()
+        return path, ("PATH" if shutil.which("Rscript") else "install location")
 
     @staticmethod
     def _find_rscript() -> str:
@@ -247,4 +330,13 @@ class RmdPipeline(PipelineInterface):
         )
 
 
-__all__ = ["RmdPipeline"]
+__all__ = [
+    "CRAN_WINDOWS_URL",
+    "KNITR_INSTALL_CMD",
+    "RToolchainError",
+    "RmdPipeline",
+    "knitr_missing_guidance",
+    "r_download_url",
+    "r_missing_guidance",
+    "rmd_requirement_message",
+]
