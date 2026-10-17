@@ -1,0 +1,10 @@
+<section xml:id="sec-appendix">
+    <title>Appendix</title>
+    <subsection xml:id="subsec-checklist">
+        <title>Checklist</title>
+        <ul>
+            <li><p>Code blocks keep their content verbatim.</p></li>
+            <li><p>Inline and display math survive conversion.</p></li>
+        </ul>
+    </subsection>
+</section>

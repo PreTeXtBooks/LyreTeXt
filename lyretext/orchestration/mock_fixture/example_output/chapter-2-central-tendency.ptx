@@ -1,0 +1,16 @@
+<section xml:id="sec-central-tendency">
+    <title>Central Tendency</title>
+    <p>
+        The mean of <m>n</m> values is
+        <m>\bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i</m>.
+    </p>
+    <program language="r">
+        <code><![CDATA[mean(sleep_hours)]]></code>
+    </program>
+    <program>
+        <code><![CDATA[## [1] 6.6]]></code>
+    </program>
+    <p>
+        The median is the middle value once the data are sorted.
+    </p>
+</section>
