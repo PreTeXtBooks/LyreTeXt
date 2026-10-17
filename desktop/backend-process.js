@@ -86,11 +86,30 @@ async function waitForHealthy(baseUrl, child, { timeoutMs = 60000, intervalMs = 
   throw new Error(`backend did not become healthy within ${timeoutMs / 1000}s`);
 }
 
+// The backend's environment (decision #84): the parent's, minus every
+// *_API_KEY variable, plus the app's stored keys and the per-launch auth token.
+// Only keys the user entered in the app reach the backend — never one that
+// happens to be set in the shell or system environment Electron started from.
+function buildBackendEnv(parentEnv, { keys = {}, authToken }) {
+  const env = { ...parentEnv };
+  for (const name of Object.keys(env)) {
+    if (/_API_KEY$/i.test(name)) delete env[name];
+  }
+  return {
+    ...env,
+    ...keys,
+    LYRETEXT_AUTH_TOKEN: authToken,
+    PYTHONUNBUFFERED: '1',
+    PYTHONIOENCODING: 'utf-8',
+  };
+}
+
 class Backend {
-  constructor({ isPackaged, resourcesPath, mode, dataDir, logFile }) {
+  constructor({ isPackaged, resourcesPath, mode, dataDir, logFile, authToken }) {
     this.opts = { isPackaged, resourcesPath, mode };
     this.dataDir = dataDir;
     this.logFile = logFile;
+    this.authToken = authToken;
     this.child = null;
     this.port = null;
     this.stopping = false;
@@ -100,7 +119,8 @@ class Backend {
     return `http://${HOST}:${this.port}`;
   }
 
-  async start() {
+  // keys: { GEMINI_API_KEY: ..., ... } from the key store, read at launch.
+  async start({ keys = {} } = {}) {
     this.port = await getFreePort();
     const { cmd, args } = resolveBackendCommand(this.opts);
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -122,7 +142,7 @@ class Backend {
       // so start it somewhere writable rather than wherever Electron was
       // launched from.
       cwd: this.dataDir,
-      env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
+      env: buildBackendEnv(process.env, { keys, authToken: this.authToken }),
       // stdin is a pipe the backend's watchdog reads: if this process dies
       // without running its exit handlers, the pipe closes and the backend exits.
       stdio: ['pipe', log, log],
@@ -151,4 +171,33 @@ class Backend {
   }
 }
 
-module.exports = { Backend };
+// POST JSON to the backend with the auth token header. Resolves
+// { status, body }; used by the main process for the internal key endpoint and
+// key tests, so key material never passes through the page.
+function postJson(baseUrl, urlPath, payload, authToken, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const data = Buffer.from(JSON.stringify(payload), 'utf8');
+    const req = http.request(baseUrl + urlPath, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': data.length,
+        'X-LyreTeXt-Token': authToken,
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let body = null;
+        try { body = JSON.parse(text); } catch { body = text; }
+        resolve({ status: res.statusCode, body });
+      });
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('backend request timed out')));
+    req.on('error', reject);
+    req.end(data);
+  });
+}
+
+module.exports = { Backend, buildBackendEnv, postJson };

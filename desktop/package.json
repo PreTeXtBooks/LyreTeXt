@@ -25,6 +25,8 @@
     "files": [
       "main.js",
       "backend-process.js",
+      "keys.js",
+      "preload.js",
       "package.json"
     ],
     "extraResources": [
