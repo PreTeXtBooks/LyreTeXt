@@ -30,9 +30,12 @@ def numeric_version(version: str) -> tuple[int, int, int, int]:
     """The four-part numeric Windows version for a semver string.
 
     The prerelease tag is dropped (0.1.0-beta.1 -> 0.1.0.0), as electron-builder
-    does for LyreTeXt.exe: a fourth field taken from the prerelease would make
-    0.1.0-beta.2 (0.1.0.2) sort above the final 0.1.0 (0.1.0.0). The full
-    version stays readable in the FileVersion/ProductVersion strings.
+    does for LyreTeXt.exe's product version: a fourth field taken from the
+    prerelease would make 0.1.0-beta.2 (0.1.0.2) sort above the final 0.1.0
+    (0.1.0.0). (electron-builder's rcedit does parse LyreTeXt.exe's numeric
+    *file* version that way, to 0.1.0.1; decision #103.) The full version stays
+    readable in the FileVersion/ProductVersion strings, and VS_FF_PRERELEASE
+    marks a prerelease.
     """
     m = _SEMVER.match(version)
     if not m:

@@ -217,7 +217,13 @@ are passed through to the backend (except `*_API_KEY`, see above), so
 `lyretext-backend.exe` with a Windows version resource generated from
 `package.json` by `backend/winversion.py` (company from `author.name`, product
 from `productName`, `version`, and `build.copyright`; description *LyreTeXt
-backend*), so a version bump needs no other edit. It ends by printing the
+backend*), so a version bump needs no other edit. The numeric version drops
+the prerelease (`0.1.0-beta.1` → `0.1.0.0`, with the prerelease flag set;
+decision #103). For comparison, electron-builder stamps `LyreTeXt.exe` with
+CompanyName *IDEMS International*, ProductName and FileDescription
+*LyreTeXt*, the same LegalCopyright, FileVersion `0.1.0-beta.1` (numeric
+`0.1.0.1`) and ProductVersion `0.1.0.0`, as logged by CI's *Locate installer*
+step. It ends by printing the
 SHA-256 of the bootloader it used and of the exe, and fails if any binary in
 the bundle is UPX-packed (UPX stays off, #100). A local freeze normally uses
 the **stock** bootloader from PyInstaller's wheel, which antivirus heuristics
