@@ -95,6 +95,9 @@ jobs:
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'pandoc-pretext'
           git init --quiet $dir
+          # Byte-exact upstream files: the pins are git blob ids, and the
+          # runner's autocrlf would turn LF into CRLF on checkout.
+          git -C $dir config core.autocrlf false
           git -C $dir fetch --quiet --depth 1 $env:WRITER_REPO $env:WRITER_COMMIT
           git -C $dir checkout --quiet --detach FETCH_HEAD
           $head = git -C $dir rev-parse HEAD
