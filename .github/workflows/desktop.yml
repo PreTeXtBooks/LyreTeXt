@@ -40,6 +40,9 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    env:
+      # One pin for the build and for the stock-bootloader comparison (#100).
+      PYINSTALLER_VERSION: '6.22.3'
     outputs:
       version: ${{ steps.installer.outputs.version }}
       installer: ${{ steps.installer.outputs.name }}
@@ -56,7 +59,43 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller==6.22.3
+          python -m pip install -r requirements.txt
+
+      # Antivirus hardening (#100). The stock PyInstaller bootloader is
+      # byte-identical in every app built with it, malware included, so AV
+      # heuristics flag it. Build PyInstaller from its source distribution and
+      # have its setup compile the bootloader here with the runner's MSVC.
+      # --no-cache-dir: never reuse a wheel built by an earlier run.
+      - name: Install PyInstaller ${{ env.PYINSTALLER_VERSION }}, bootloader compiled from source
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: '1'
+        run: |
+          python -m pip install --no-cache-dir --no-binary pyinstaller -v "pyinstaller==$env:PYINSTALLER_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller exited with $LASTEXITCODE" }
+
+      - name: Check the bootloader differs from the stock wheel's
+        run: |
+          $installed = python -c "import PyInstaller; print(PyInstaller.__version__)"
+          if ($installed -ne $env:PYINSTALLER_VERSION) { throw "PyInstaller $installed installed, expected $env:PYINSTALLER_VERSION" }
+          $blDir = python -c "import os, PyInstaller; print(os.path.join(os.path.dirname(PyInstaller.__file__), 'bootloader', 'Windows-64bit-intel'))"
+          # The stock wheel, fetched only to compare against; nothing is installed from it.
+          $stock = Join-Path $env:RUNNER_TEMP 'pyinstaller-stock'
+          python -m pip download --no-deps --only-binary ':all:' --no-cache-dir --dest $stock "pyinstaller==$env:PYINSTALLER_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "pip download of the stock wheel exited with $LASTEXITCODE" }
+          $wheel = (Get-ChildItem $stock -Filter 'pyinstaller-*.whl' | Select-Object -First 1).FullName
+          if (-not $wheel) { throw 'no stock PyInstaller wheel downloaded' }
+          Write-Host "stock wheel: $(Split-Path $wheel -Leaf)"
+          $summary = @('### PyInstaller bootloader (#100)', '', "PyInstaller $installed, bootloader compiled on this runner.", '', '| file | compiled here (SHA-256) | stock wheel (SHA-256) |', '|---|---|---|')
+          foreach ($name in 'run.exe', 'runw.exe', 'run_d.exe', 'runw_d.exe') {
+            $built = (Get-FileHash (Join-Path $blDir $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            $stockHash = python -c "import hashlib, sys, zipfile; print(hashlib.sha256(zipfile.ZipFile(sys.argv[1]).read('PyInstaller/bootloader/Windows-64bit-intel/' + sys.argv[2])).hexdigest())" $wheel $name
+            if ($LASTEXITCODE -ne 0 -or -not $stockHash) { throw "could not read $name from the stock wheel" }
+            Write-Host "$name compiled here: $built"
+            Write-Host "$name stock wheel:   $stockHash"
+            if ($built -eq $stockHash) { throw "$name is byte-identical to the stock PyInstaller bootloader: it was not compiled from source" }
+            $summary += "| ``$name`` | ``$built`` | ``$stockHash`` |"
+          }
+          ($summary + '') | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Run tests
         run: python -m pytest -q
@@ -127,13 +166,40 @@ jobs:
         working-directory: desktop
         run: node scripts/stage-toolchain.js --strict --pandoc $env:PANDOC_EXE --writer-dir $env:WRITER_DIR
 
+      # Also prints the bootloader and exe SHA-256 and fails on any UPX-packed
+      # binary in the bundle (#100).
       - name: Freeze backend
-        run: python desktop/backend/freeze.py
+        run: |
+          python desktop/backend/freeze.py
+          if ($LASTEXITCODE -ne 0) { throw "freeze exited with $LASTEXITCODE" }
 
       - name: Frozen backend self-check
         run: |
           & desktop/dist/lyretext-backend/lyretext-backend.exe --self-check
           if ($LASTEXITCODE -ne 0) { throw "self-check exited with $LASTEXITCODE" }
+
+      # #100: the backend exe carries package.json's metadata (winversion.py).
+      - name: Check the frozen backend's version resource
+        run: |
+          $exe = Get-Item desktop/dist/lyretext-backend/lyretext-backend.exe
+          $pkg = Get-Content desktop/package.json -Raw -Encoding utf8 | ConvertFrom-Json
+          $vi = $exe.VersionInfo
+          $vi | Format-List CompanyName, ProductName, FileDescription, FileVersion, ProductVersion, LegalCopyright, OriginalFilename, InternalName, FileVersionRaw, ProductVersionRaw, IsPreRelease
+          $expected = [ordered]@{
+            CompanyName      = $pkg.author.name
+            ProductName      = $pkg.productName
+            FileDescription  = 'LyreTeXt backend'
+            FileVersion      = $pkg.version
+            ProductVersion   = $pkg.version
+            LegalCopyright   = $pkg.build.copyright
+            OriginalFilename = 'lyretext-backend.exe'
+          }
+          foreach ($k in $expected.Keys) {
+            if ($vi.$k -ne $expected[$k]) { throw "lyretext-backend.exe ${k}: '$($vi.$k)', expected '$($expected[$k])'" }
+          }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "lyretext-backend.exe SHA-256: $hash ($($exe.Length) bytes)"
+          @('### Frozen backend (#100)', '', "``lyretext-backend.exe`` SHA-256 ``$hash``", '', "Version resource: $($vi.CompanyName) / $($vi.ProductName) / $($vi.FileDescription) / $($vi.FileVersion) (numeric $($vi.FileVersionRaw))", '') | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Build NSIS installer
         working-directory: desktop
@@ -153,6 +219,8 @@ jobs:
           "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "$($exe.Name): $mb MB ($($exe.Length) bytes)"
+          # What electron-builder stamps on the app exe, to compare with the backend's (#100).
+          (Get-Item desktop/release/win-unpacked/LyreTeXt.exe).VersionInfo | Format-List CompanyName, ProductName, FileDescription, FileVersion, ProductVersion, LegalCopyright, OriginalFilename, FileVersionRaw, ProductVersionRaw
           @("### Installer", "", "``$($exe.Name)``: **$mb MB** ($($exe.Length) bytes)", "") | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Smoke-test the installer
@@ -247,6 +315,7 @@ jobs:
           1. Download \`${installer}\` and run it.
           2. Windows SmartScreen will say *"Windows protected your PC"*, because the installer is not code-signed yet. Click **More info**, then **Run anyway**.
           3. The first launch can take up to a minute while Windows Defender scans the app; a *Starting LyreTeXt…* window shows meanwhile.
+          4. Some antivirus products (e.g. Norton) may block or quarantine the unsigned beta. See [Antivirus warnings](https://github.com/${GITHUB_REPOSITORY}/blob/main/desktop/README.md#installing-the-beta-testers) for how to restore it, exclude the install folder and report the false positive. Code signing (#66) is the lasting fix.
 
           ### Attached
           - \`${installer}\`: the installer.
