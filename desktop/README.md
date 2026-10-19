@@ -1,12 +1,32 @@
-# LyreTeXt desktop (Phase 0 spike)
+# LyreTeXt desktop
 
 An Electron shell that runs the LyreTeXt backend as a sidecar and shows the
-existing web UI in its own window. Windows first; unsigned. See #63 (architecture),
-#68 (this spike) and #75 (PyInstaller decision).
+existing web UI in its own window. Windows first; unsigned beta. See #63
+(architecture), #68 (spike), #75 (PyInstaller) and #71 (installer and CI).
+
+## Installing the beta (testers)
+
+Download `LyreTeXt-Setup-<version>.exe` from the release (or from the
+`LyreTeXt-installer` artifact of a CI run) and run it. It installs for the
+current user only, into `%LOCALAPPDATA%\Programs\`, with no administrator rights
+or UAC prompt, and adds Start-menu and desktop shortcuts.
+
+**SmartScreen.** The beta is not code-signed yet (#66), so Windows shows
+*"Windows protected your PC"*. Click **More info**, then **Run anyway**. Some
+browsers also flag the download as uncommon: choose *Keep* (Edge: *…* → *Keep* →
+*Show more* → *Keep anyway*).
+
+**First launch is slow.** Windows Defender scans the freshly installed app, so
+the first start can take 30 s or more (later starts take a few seconds). A
+*Starting LyreTeXt…* window shows until the app is ready.
+
+**Uninstalling.** Settings → Apps → LyreTeXt → Uninstall. Your data, keys and
+logs in `%APPDATA%\LyreTeXt` are kept; delete that folder to remove them too.
 
 ## How it works
 
-`main.js` takes a single-instance lock, then `backend-process.js`:
+`main.js` takes a single-instance lock, shows the *Starting LyreTeXt…* splash
+(`splash.html`), then `backend-process.js`:
 
 1. picks a free port on `127.0.0.1`;
 2. starts the backend with `--host 127.0.0.1 --port <port> --data-dir
@@ -18,7 +38,9 @@ existing web UI in its own window. Windows first; unsigned. See #63 (architectur
    backend's cwd is also set to the data dir, for the tools it runs (knitr
    writes figures relative to R's working directory);
 3. polls `GET /api/health` until it returns 200;
-4. opens a window at `http://127.0.0.1:<port>/ui/`.
+4. opens a window at `http://127.0.0.1:<port>/ui/`, shows it once the UI has
+   loaded and closes the splash. Closing the splash during startup quits the
+   app and stops the half-started backend.
 
 Tool locations can be injected through the environment:
 `LYRETEXT_PANDOC_EXE`, `LYRETEXT_PANDOC_WRITER` (the `pretext.lua` writer) and
@@ -51,7 +73,9 @@ can supply a pandoc it downloaded:
 
 pandoc must be 3.0 or later. `toolchain/toolchain.json` records the verified
 pandoc version and the pandoc-pretext commit and file hashes the writer was
-checked against; staging warns when what it is given differs. A `LICENSE` in
+checked against; staging warns when what it is given differs, and fails with
+`--strict` (as CI runs it). It also pins the SHA-256 of pandoc's Windows zip
+and the commit of its source tag, which CI checks. A `LICENSE` in
 the writer folder (an upstream checkout has one) is shipped as-is, otherwise the
 vendored `toolchain/licenses/GPL-2.0.txt`.
 
@@ -123,8 +147,14 @@ npm run freeze                 # PyInstaller -> desktop/dist/lyretext-backend (a
 npm run start:frozen           # Electron + the frozen backend
 npm run toolchain              # stage pandoc + pretext.lua -> desktop/dist/toolchain
 npm run pack                   # toolchain, then electron-builder --win --dir -> desktop/release/win-unpacked
+npm run dist                   # toolchain, then the NSIS installer -> desktop/release/LyreTeXt-Setup-<version>.exe
 dist/lyretext-backend/lyretext-backend.exe --self-check   # verify the frozen bundle
 ```
+
+`npm run dist` needs `npm run freeze` first. The version is `version` in
+`package.json`; the icon is `assets/icon.ico`, regenerated from
+`frontend/assets/logomark.svg` by `node scripts/make-icon.js` (uses a local
+Edge or Chrome; the output is committed).
 
 `--self-check` imports the app, checks that TLS verifies against the Windows
 certificate store (truststore, #90; certifi alone fails behind proxies and
@@ -143,7 +173,32 @@ main checkout's venv); set `LYRETEXT_PYTHON` to override. Environment variables
 are passed through to the backend (except `*_API_KEY`, see above), so
 `LYRETEXT_MOCK=1` runs the mock pipeline with no API keys.
 
-`npm run freeze` needs `pyinstaller` in the venv. In the spike build it also
-bundles the gitignored `demo/temp_output` and `demo/example_output` (found by
-walking up from the repo, or via `LYRETEXT_DEMO_DIR`) so the frozen app can run
-`LYRETEXT_MOCK=1`; a release build would drop them.
+`npm run freeze` needs `pyinstaller` in the venv. Mock mode replays the small
+tracked fixture book in `lyretext/orchestration/mock_fixture` (or the local,
+gitignored `demo/` when present), which the freeze bundles as package data, so
+any build, including an installed one, can run `LYRETEXT_MOCK=1`.
+
+## CI and releases (#71)
+
+`.github/workflows/desktop.yml` runs on a Windows runner for pull requests that
+touch `desktop/`, `lyretext/`, `frontend/`, `tests/` or `requirements.txt`, on
+pushes to `main`, and on demand:
+
+1. `pytest -q`;
+2. downloads pandoc's Windows zip and checks it against the SHA-256 in
+   `toolchain/toolchain.json`, fetches pandoc-pretext at the pinned commit, and
+   stages them with `stage-toolchain.js --strict`;
+3. freezes the backend (plus `--self-check`) and builds the NSIS installer;
+4. smoke-tests it (`scripts/ci-smoke.ps1`): silent install; the installed
+   backend, driven by `scripts/smoke-backend.js` through the app's own
+   `backend-process.js`, must report pandoc and the writer as bundled, take a
+   mock run to the manifest gate and leave no process behind on stop; the
+   installed app is launched with `LYRETEXT_MOCK=1`, quit, and checked for
+   leftover processes; silent uninstall;
+5. uploads the installer and the licence/notice files as artifacts.
+
+Pushing a `v<version>` tag (matching `package.json`) also runs the release job,
+which creates a **draft** GitHub Release with the installer, the notices, the
+exact upstream source tarball of the bundled pandoc and `SHA256SUMS.txt`. A
+person reviews and publishes it. Running the workflow by hand with
+*release_dry_run* runs that job without creating anything.

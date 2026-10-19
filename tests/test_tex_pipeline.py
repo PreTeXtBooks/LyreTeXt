@@ -272,6 +272,14 @@ class TestReadStageDetectsTexProjects:
 
     def test_rmd_project_is_not_diverted_by_incidental_tex_files(self, tmp_project):
         """A bookdown project shipping a preamble.tex stays on the rmd pipeline."""
+        # Staying on the rmd pipeline means knitting index.Rmd for real.
+        from lyretext.environment import rmd_preflight
+        from lyretext.pipeline.rmd import RToolchainError
+        try:
+            rmd_preflight()
+        except RToolchainError as exc:
+            pytest.skip(f"needs R with knitr: {exc}")
+
         project = tmp_project / "project"
         project.mkdir()
         (project / "index.Rmd").write_text("# Chapter\n", encoding="utf-8")

@@ -13,7 +13,6 @@
 # bundling these at the _internal root keeps every lookup working unchanged.
 # The bundled config.yml is only the default: the app runs with --data-dir and
 # seeds its own writable copy from it (lyretext.config.data_paths).
-import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -48,29 +47,9 @@ datas += LYRETEXT_DATA
 # import analysis does not see. Without it Client() fails on the first real run
 # (mock runs never build one); `lyretext-backend --self-check` catches that.
 datas += collect_data_files("inferenceswitch")
-
-
-def _find_demo_dir() -> Path | None:
-    """demo/ is gitignored, so a worktree may not have it — look upward."""
-    env = os.environ.get("LYRETEXT_DEMO_DIR")
-    if env:
-        return Path(env)
-    for d in [REPO, *REPO.parents]:
-        if (d / "demo" / "example_output").is_dir():
-            return d / "demo"
-    return None
-
-
-# SPIKE ONLY: LYRETEXT_MOCK=1 replays demo/{temp_output,example_output}
-# (mock_graph.py), so bundle them to let the frozen app run a mock pipeline.
-# A release build would drop these.
-demo = _find_demo_dir()
-if demo is not None:
-    for sub in ("temp_output", "example_output"):
-        if (demo / sub).is_dir():
-            datas.append((str(demo / sub), f"demo/{sub}"))
-else:
-    print("WARNING: demo/ not found; LYRETEXT_MOCK runs will fail in the frozen build")
+# LYRETEXT_MOCK=1 replays lyretext/orchestration/mock_fixture (#71), which
+# LYRETEXT_DATA above already bundles as package data. The gitignored demo/ is
+# deliberately not bundled, so every build ships the same tracked content.
 
 hiddenimports = (
     # uvicorn.run("lyretext.api:app") imports the app by string.

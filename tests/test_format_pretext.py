@@ -9,6 +9,7 @@ from __future__ import annotations
 import glob
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
@@ -362,21 +363,43 @@ class TestWiredIntoBothProducers:
         assert result["pretext_output"] == self.SPRAWL
 
 
-class TestRealCorpus:
-    """Every .ptx this project has produced, held to the same invariants."""
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
-    CORPUS = sorted(
-        glob.glob("output/*/*.ptx")
-        + glob.glob("demo/**/*.ptx", recursive=True)
-        + glob.glob("examples/**/*.ptx", recursive=True)
+
+def _corpus(*patterns: str) -> list[str]:
+    """Repo-relative paths matching *patterns*, wherever pytest is run from."""
+    return sorted({
+        Path(p).as_posix()
+        for pattern in patterns
+        for p in glob.glob(pattern, root_dir=_REPO_ROOT, recursive=True)
+    })
+
+
+class TestRealCorpus:
+    """Every .ptx this project has produced, held to the same invariants.
+
+    output/ and demo/ are local and gitignored; the mock pipeline's tracked
+    fixture (lyretext/orchestration/mock_fixture) keeps the corpus non-empty on
+    a clean checkout or CI runner (#71), and is checked alongside them.
+    """
+
+    CORPUS = _corpus(
+        "output/*/*.ptx",
+        "demo/**/*.ptx",
+        "examples/**/*.ptx",
+        "lyretext/orchestration/mock_fixture/**/*.ptx",
     )
 
     def test_corpus_is_not_empty(self):
         assert self.CORPUS, "no .ptx files found to check"
 
+    def test_tracked_fixture_is_in_the_corpus(self):
+        """The guarantee a clean checkout relies on, stated on its own."""
+        assert any(p.startswith("lyretext/orchestration/mock_fixture/") for p in self.CORPUS)
+
     @pytest.mark.parametrize("path", CORPUS)
     def test_formatting_preserves_every_real_artifact(self, path):
-        source = open(path, encoding="utf-8").read()
+        source = (_REPO_ROOT / path).read_text(encoding="utf-8")
         formatted, notes = format_pretext(source)
         if notes:
             # The only acceptable refusals are the documented ones.
@@ -396,7 +419,7 @@ class TestRealCorpus:
         """
         from lyretext.render import render_pretext
 
-        source = open(path, encoding="utf-8").read()
+        source = (_REPO_ROOT / path).read_text(encoding="utf-8")
         formatted, notes = format_pretext(source)
         if notes:
             return

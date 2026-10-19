@@ -1,8 +1,13 @@
 {
   "name": "lyretext-desktop",
   "productName": "LyreTeXt",
-  "version": "0.0.1-spike",
-  "description": "LyreTeXt desktop shell: Electron window over the Python backend sidecar (Phase 0 spike, #68)",
+  "version": "0.1.0-beta.1",
+  "description": "LyreTeXt desktop app: convert LaTeX, R Markdown and Quarto books to PreTeXt",
+  "author": {
+    "name": "IDEMS International",
+    "url": "https://github.com/PreTeXtBooks/LyreTeXt"
+  },
+  "homepage": "https://github.com/PreTeXtBooks/LyreTeXt",
   "main": "main.js",
   "private": true,
   "license": "SEE LICENSE IN ../LICENSE",
@@ -11,7 +16,8 @@
     "start:frozen": "electron . --backend=frozen",
     "freeze": "python backend/freeze.py",
     "toolchain": "node scripts/stage-toolchain.js",
-    "pack": "node scripts/stage-toolchain.js && electron-builder --win --dir"
+    "pack": "node scripts/stage-toolchain.js && electron-builder --win --dir",
+    "dist": "node scripts/stage-toolchain.js && electron-builder --win nsis --publish never"
   },
   "devDependencies": {
     "electron": "^38.2.0",
@@ -20,14 +26,18 @@
   "build": {
     "appId": "org.pretextbooks.lyretext",
     "productName": "LyreTeXt",
+    "copyright": "Copyright © 2026 IDEMS International. Licensed under the GNU GPL v3.",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets"
     },
     "files": [
       "main.js",
       "backend-process.js",
       "keys.js",
       "preload.js",
+      "splash.html",
+      "assets/icon.png",
       "package.json"
     ],
     "extraResources": [
@@ -40,11 +50,28 @@
         "from": "dist/toolchain",
         "to": "toolchain",
         "filter": ["**/*"]
+      },
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE.txt"
       }
     ],
     "asar": true,
     "win": {
-      "target": "dir"
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "shortcutName": "LyreTeXt",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }
