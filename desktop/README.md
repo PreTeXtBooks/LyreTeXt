@@ -20,6 +20,45 @@ browsers also flag the download as uncommon: choose *Keep* (Edge: *…* → *Kee
 the first start can take 30 s or more (later starts take a few seconds). A
 *Starting LyreTeXt…* window shows until the app is ready.
 
+**Antivirus warnings (Norton, Defender and others).** Beta builds are
+unsigned, and unsigned apps with few downloads are often flagged by antivirus
+products on reputation alone (Norton reports these as e.g. `WS.Reputation.1`).
+The app may be blocked when you download it, run the installer, or start
+LyreTeXt, and a file may be moved to quarantine. Only make an exception for an
+installer from the project's GitHub release or CI run, and check its SHA-256
+against the release's `SHA256SUMS.txt` (`Get-FileHash <file>` in PowerShell).
+
+- *Restore a blocked file.*
+  - **Norton 360:** open Norton → **Security** → **History**. Set *Show* to
+    *Quarantine* (or *Resolved Security Risks*), select the LyreTeXt item,
+    then **Options** → **Restore & exclude this file**.
+  - **Microsoft Defender:** Windows Security → **Virus & threat protection** →
+    **Protection history**. Open the item, then **Actions** → **Restore** (or
+    **Allow on device**).
+- *Exclude the install folder*, `%LOCALAPPDATA%\Programs\lyretext-desktop`, so
+  updates are not caught again.
+  - **Norton 360:** **Settings** → **Antivirus** → **Scans and Risks** →
+    *Items to Exclude from Scans* → **Configure** → **Add folders**. Do the
+    same under *Items to Exclude from Auto-Protect, Script Control, SONAR and
+    Download Intelligence Detection*.
+  - **Microsoft Defender:** Windows Security → **Virus & threat protection** →
+    *Virus & threat protection settings* → **Manage settings** → **Exclusions**
+    → **Add or remove exclusions** → **Add an exclusion** → **Folder**. This
+    needs administrator rights.
+- *Report the false positive* so the vendor clears it for everyone: Norton at
+  <https://submit.norton.com/> (choose *false positive*), Microsoft through the
+  Defender file-submission portal at
+  <https://www.microsoft.com/wdsi/filesubmission>. Give the file, the LyreTeXt
+  version and the detection name, and say in the issue tracker that you did.
+
+What the build already does to avoid false positives (#100): the backend's
+PyInstaller bootloader is compiled from source in CI rather than being the
+stock one shared by every PyInstaller app, both executables carry version
+information (company, product, description, version), and nothing is
+UPX-packed. These lower the odds of a heuristic detection but do not build
+reputation. **Code signing is the lasting fix**, tracked in #66 and #72; until
+then, expect some antivirus products to flag new beta versions.
+
 **Uninstalling.** Settings → Apps → LyreTeXt → Uninstall. Your data, keys and
 logs in `%APPDATA%\LyreTeXt` are kept; delete that folder to remove them too.
 
@@ -173,7 +212,23 @@ main checkout's venv); set `LYRETEXT_PYTHON` to override. Environment variables
 are passed through to the backend (except `*_API_KEY`, see above), so
 `LYRETEXT_MOCK=1` runs the mock pipeline with no API keys.
 
-`npm run freeze` needs `pyinstaller` in the venv. Mock mode replays the small
+`npm run freeze` needs `pyinstaller` in the venv (the version CI pins,
+`PYINSTALLER_VERSION` in `.github/workflows/desktop.yml`). The freeze stamps
+`lyretext-backend.exe` with a Windows version resource generated from
+`package.json` by `backend/winversion.py` (company from `author.name`, product
+from `productName`, `version`, and `build.copyright`; description *LyreTeXt
+backend*), so a version bump needs no other edit. The numeric version drops
+the prerelease (`0.1.0-beta.1` → `0.1.0.0`, with the prerelease flag set;
+decision #103). For comparison, electron-builder stamps `LyreTeXt.exe` with
+CompanyName *IDEMS International*, ProductName and FileDescription
+*LyreTeXt*, the same LegalCopyright, FileVersion `0.1.0-beta.1` (numeric
+`0.1.0.1`) and ProductVersion `0.1.0.0`, as logged by CI's *Locate installer*
+step. It ends by printing the
+SHA-256 of the bootloader it used and of the exe, and fails if any binary in
+the bundle is UPX-packed (UPX stays off, #100). A local freeze normally uses
+the **stock** bootloader from PyInstaller's wheel, which antivirus heuristics
+flag more readily; **release builds come from CI**, which compiles the
+bootloader from source. Mock mode replays the small
 tracked fixture book in `lyretext/orchestration/mock_fixture` (or the local,
 gitignored `demo/` when present), which the freeze bundles as package data, so
 any build, including an installed one, can run `LYRETEXT_MOCK=1`.
@@ -184,11 +239,17 @@ any build, including an installed one, can run `LYRETEXT_MOCK=1`.
 touch `desktop/`, `lyretext/`, `frontend/`, `tests/` or `requirements.txt`, on
 pushes to `main`, and on demand:
 
-1. `pytest -q`;
+1. installs PyInstaller from its source distribution with
+   `PYINSTALLER_COMPILE_BOOTLOADER=1`, so the bootloader is compiled on the
+   runner with MSVC, and fails unless each compiled bootloader differs from
+   the stock wheel's (SHA-256 of both in the log and the job summary); then
+   `pytest -q`;
 2. downloads pandoc's Windows zip and checks it against the SHA-256 in
    `toolchain/toolchain.json`, fetches pandoc-pretext at the pinned commit, and
    stages them with `stage-toolchain.js --strict`;
-3. freezes the backend (plus `--self-check`) and builds the NSIS installer;
+3. freezes the backend (plus `--self-check`), checks `lyretext-backend.exe`'s
+   version resource against `package.json` and logs its SHA-256, and builds
+   the NSIS installer;
 4. smoke-tests it (`scripts/ci-smoke.ps1`): silent install; the installed
    backend, driven by `scripts/smoke-backend.js` through the app's own
    `backend-process.js`, must report pandoc and the writer as bundled, take a

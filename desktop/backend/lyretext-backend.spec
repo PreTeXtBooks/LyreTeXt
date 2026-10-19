@@ -13,12 +13,30 @@
 # bundling these at the _internal root keeps every lookup working unchanged.
 # The bundled config.yml is only the default: the app runs with --data-dir and
 # seeds its own writable copy from it (lyretext.config.data_paths).
+#
+# Antivirus false positives (#100): the exe carries a Windows version resource
+# generated from desktop/package.json (winversion.py), and UPX stays off. Release
+# builds also use a bootloader compiled from source in CI rather than the stock
+# one in the PyInstaller wheel (.github/workflows/desktop.yml); local freezes may
+# use either.
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 HERE = Path(SPECPATH)
 REPO = HERE.parents[1]
+
+sys.path.insert(0, str(HERE))
+from winversion import build_version_info, version_fields  # noqa: E402
+
+VERSION_INFO = build_version_info()
+print(f"lyretext-backend version resource: {version_fields()['strings']}")
+
+# UPX must stay off (#100). UPX-packed executables are a classic malware trait
+# and among the most reliable antivirus false-positive triggers; it also breaks
+# some DLLs. tests/test_desktop_freeze_spec.py fails if this changes.
+UPX = False
 
 PKG = REPO / "lyretext"
 
@@ -94,6 +112,7 @@ exe = EXE(
     # watchdog and the log redirect. Electron spawns it with windowsHide, so no
     # console window appears.
     console=True,
-    upx=False,
+    version=VERSION_INFO,
+    upx=UPX,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="lyretext-backend", upx=False)
+coll = COLLECT(exe, a.binaries, a.datas, name="lyretext-backend", upx=UPX)
